@@ -23,7 +23,9 @@ class InscripcionCronService {
     const zombies = await prisma.inscripciones.findMany({
       where: {
         estado: 'PENDIENTE_PAGO',
-        fecha_inscripcion: { lt: horaCorte },
+        // ✅ AJUSTE 1: Usamos 'creado_en' para detectar el momento real del registro
+        // Antes: fecha_inscripcion (fallaba en upgrades porque viajaba al pasado)
+        creado_en: { lt: horaCorte },
       },
     });
 
@@ -36,9 +38,11 @@ class InscripcionCronService {
             where: {
               alumno_id: zombie.alumno_id,
               estado: 'PENDIENTE',
+              // ✅ AJUSTE 2: El nexo temporal ahora es con el momento de creación
+              // Antes: zombie.fecha_inscripcion (en upgrades no coincidía con la deuda nueva)
               creado_en: {
-                gte: new Date(zombie.fecha_inscripcion.getTime() - 30000),
-                lte: new Date(zombie.fecha_inscripcion.getTime() + 30000),
+                gte: new Date(zombie.creado_en.getTime() - 40000),
+                lte: new Date(zombie.creado_en.getTime() + 40000),
               },
             },
             include: { descuentos_aplicados: true },
@@ -73,7 +77,6 @@ class InscripcionCronService {
             where: { id: zombie.id },
           });
 
-          // 2. 🔥 AQUÍ METEMOS EL LOG PARA EL FRONTEND
           await notificacionesService.crear({
             alumnoId: zombie.alumno_id,
             titulo: '🎯 Reserva Zombie Eliminada',
