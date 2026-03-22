@@ -13,7 +13,7 @@ export const detectarRegimenAlumno = async (tx, alumnoId) => {
     return false;
   }
 
-  // 3. Verificamos si en su historial dice "Antiguo". 
+  // 3. Verificamos si en su historial dice "Antiguo".
   // Lo pasamos a mayúsculas para que no falle si el admin escribe "antiguo", "Antiguo" o "ANTIGUO".
   const esLegacy = alumno.historial.toUpperCase().includes('ANTIGUO');
 
@@ -29,40 +29,73 @@ export const detectarRegimenAlumno = async (tx, alumnoId) => {
 /**
  * Determina si es un Upgrade y calcula la fecha de corte del ciclo actual.
  */
+/**
+ * Determina si es un Upgrade y calcula la fecha de corte del ciclo actual.
+ * 🛡️ BLINDAJE: Caso 9 (Pagador Adelantado) y Caso 5 (Anti-Limbo).
+ */
 export const calcularCicloUpgrade = async (tx, alumnoId) => {
   const hoyRaw = new Date();
-  // 🔥 Limpiamos la hora de "hoy" para que sea exactamente la medianoche UTC
-  const hoy = new Date(Date.UTC(hoyRaw.getUTCFullYear(), hoyRaw.getUTCMonth(), hoyRaw.getUTCDate()));
-  
+  // 🕒 Medianoche UTC para comparar días exactos sin líos de horas
+  const hoy = new Date(
+    Date.UTC(hoyRaw.getUTCFullYear(), hoyRaw.getUTCMonth(), hoyRaw.getUTCDate())
+  );
+
   const inscripcionMadre = await tx.inscripciones.findFirst({
     where: { alumno_id: parseInt(alumnoId), estado: 'ACTIVO' },
-    orderBy: { fecha_inscripcion: 'asc' }, 
+    orderBy: { fecha_inscripcion: 'asc' },
   });
 
   if (inscripcionMadre) {
     const fechaInicioCiclo = new Date(inscripcionMadre.fecha_inscripcion);
-    const fechaFinCiclo = new Date(fechaInicioCiclo);
-    fechaFinCiclo.setDate(fechaFinCiclo.getDate() + 30);
+    const inicioLimpio = new Date(
+      Date.UTC(
+        fechaInicioCiclo.getUTCFullYear(),
+        fechaInicioCiclo.getUTCMonth(),
+        fechaInicioCiclo.getUTCDate()
+      )
+    );
 
-    // 🔥 Limpiamos la hora del fin de ciclo
-    const finLimpio = new Date(Date.UTC(fechaFinCiclo.getUTCFullYear(), fechaFinCiclo.getUTCMonth(), fechaFinCiclo.getUTCDate()));
-
-    // 🔥 Ahora la resta es perfecta y en días enteros
-    const diasParaFinCiclo = Math.round((finLimpio.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24));
-
-    if (diasParaFinCiclo > 45) {
+    // 🔥 REGLA DE ORO: BLOQUEO CASO 9 (Pagador Adelantado / Salto al Futuro)
+    // Si su "Día 1" es después de hoy, significa que ya renovó.
+    if (inicioLimpio > hoy) {
       throw new Error(
-        `⛔ CIERRE DE CICLO: Ya adelantaste el pago de tu próximo mes. Espera al inicio de tu nuevo ciclo para agregar más horarios.`
+        `⛔ CIERRE DE CICLO: Ya adelantaste el pago de tu próximo mes (inicia el ${inicioLimpio.toLocaleDateString('es-PE')}). Por orden administrativo, no puedes sumar clases extras en este momento para evitar descuadres.`
       );
     }
 
-    if (fechaFinCiclo > hoyRaw) { // Usamos hoyRaw aquí para que devuelva el objeto
+    // 📅 CÁLCULO DEL FIN DE CICLO (Día 30)
+    const fechaFinCiclo = new Date(fechaInicioCiclo);
+    fechaFinCiclo.setDate(fechaFinCiclo.getDate() + 30);
+
+    const finLimpio = new Date(
+      Date.UTC(
+        fechaFinCiclo.getUTCFullYear(),
+        fechaFinCiclo.getUTCMonth(),
+        fechaFinCiclo.getUTCDate()
+      )
+    );
+    const diasParaFinCiclo = Math.round(
+      (finLimpio.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24)
+    );
+
+    // 🧱 REGLA DE SEGURIDAD: CASO 5 (Bloqueo Anti-Limbo)
+    // Si le quedan 5 días o menos para vencer, no lo dejamos hacer Upgrade.
+    if (diasParaFinCiclo <= 5 && diasParaFinCiclo >= 0) {
+      throw new Error(
+        `⛔ BLOQUEO DE CICLO: Te quedan solo ${diasParaFinCiclo} días para terminar tu mes. No puedes agregar horarios ahora; espera a tu próxima renovación.`
+      );
+    }
+
+    // ✅ RETORNO DE CICLO VÁLIDO
+    // Permitimos Upgrades si el ciclo es vigente O si está en el margen de 15 días (tu colchón)
+    if (fechaFinCiclo > hoyRaw || diasParaFinCiclo >= -15) {
       return {
         fechaCorte: fechaFinCiclo,
-        fechaMadre: fechaInicioCiclo
+        fechaMadre: fechaInicioCiclo,
       };
     }
   }
+
   return null;
 };
 /**
@@ -78,7 +111,7 @@ export const obtenerPlanParaRenovar = async (tx, alumnoId) => {
   if (!ultimaDeuda || !ultimaDeuda.catalogo_conceptos) return null;
 
   const concepto = ultimaDeuda.catalogo_conceptos;
-  
+
   // Si el plan fue desactivado por administración, no se hereda
   if (!concepto.activo) return null;
 
