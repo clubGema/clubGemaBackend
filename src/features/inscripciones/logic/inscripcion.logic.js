@@ -35,10 +35,17 @@ export const detectarRegimenAlumno = async (tx, alumnoId) => {
  */
 export const calcularCicloUpgrade = async (tx, alumnoId) => {
   const hoyRaw = new Date();
-  // 🕒 Medianoche UTC para comparar días exactos sin líos de horas
   const hoy = new Date(
     Date.UTC(hoyRaw.getUTCFullYear(), hoyRaw.getUTCMonth(), hoyRaw.getUTCDate())
   );
+
+  // 1️⃣ [NUEVO] Traemos el valor real de la base de datos (tu captura de DBeaver)
+  const parametroTolerancia = await tx.parametros_sistema.findUnique({
+    where: { clave: 'DIAS_TOLERANCIA_VENCIMIENTO' },
+  });
+
+  // Si por alguna razón no existe en la BD, usamos 5 por defecto por seguridad
+  const diasTolerancia = parametroTolerancia ? parseInt(parametroTolerancia.valor) : 5;
 
   const inscripcionMadre = await tx.inscripciones.findFirst({
     where: { alumno_id: parseInt(alumnoId), estado: 'ACTIVO' },
@@ -55,15 +62,13 @@ export const calcularCicloUpgrade = async (tx, alumnoId) => {
       )
     );
 
-    // 🔥 REGLA DE ORO: BLOQUEO CASO 9 (Pagador Adelantado / Salto al Futuro)
-    // Si su "Día 1" es después de hoy, significa que ya renovó.
+    // CASO 9: Bloqueo de futuro
     if (inicioLimpio > hoy) {
       throw new Error(
-        `⛔ CIERRE DE CICLO: Ya adelantaste el pago de tu próximo mes (inicia el ${inicioLimpio.toLocaleDateString('es-PE')}). Por orden administrativo, no puedes sumar clases extras en este momento para evitar descuadres.`
+        `⛔ CIERRE DE CICLO: Ya adelantaste el pago de tu próximo mes (inicia el ${inicioLimpio.toLocaleDateString('es-PE')}).`
       );
     }
 
-    // 📅 CÁLCULO DEL FIN DE CICLO (Día 30)
     const fechaFinCiclo = new Date(fechaInicioCiclo);
     fechaFinCiclo.setDate(fechaFinCiclo.getDate() + 30);
 
@@ -78,17 +83,15 @@ export const calcularCicloUpgrade = async (tx, alumnoId) => {
       (finLimpio.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24)
     );
 
-    // 🧱 REGLA DE SEGURIDAD: CASO 5 (Bloqueo Anti-Limbo)
-    // Si le quedan 5 días o menos para vencer, no lo dejamos hacer Upgrade.
-    if (diasParaFinCiclo <= 5 && diasParaFinCiclo >= 0) {
+    // 2️⃣ [CORRECCIÓN DINÁMICA] Usamos "diasTolerancia" de la BD
+    // Bloqueamos si faltan 5 días (o lo que diga la BD) o si ya venció
+    if (diasParaFinCiclo <= diasTolerancia) {
       throw new Error(
-        `⛔ BLOQUEO DE CICLO: Te quedan solo ${diasParaFinCiclo} días para terminar tu mes. No puedes agregar horarios ahora; espera a tu próxima renovación.`
+        `⛔ CIERRE DE VENTAS: Estás en los últimos ${diasTolerancia} días de tu ciclo (o ya venció). Por orden administrativo, no se permiten Upgrades para evitar descuadres en tu próxima facturación.`
       );
     }
 
-    // ✅ RETORNO DE CICLO VÁLIDO
-    // Permitimos Upgrades si el ciclo es vigente O si está en el margen de 15 días (tu colchón)
-    if (fechaFinCiclo > hoyRaw || diasParaFinCiclo >= -15) {
+    if (fechaFinCiclo > hoyRaw) {
       return {
         fechaCorte: fechaFinCiclo,
         fechaMadre: fechaInicioCiclo,
