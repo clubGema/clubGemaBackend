@@ -59,7 +59,7 @@ export const iniciarCronJobs = () => {
   // Objetivo: Generar la deuda del próximo mes X días antes del vencimiento.
   // ------------------------------------------------------------------
   cron.schedule(
-    '30 0 * * *',
+    '* * * * *',
     async () => {
       logger.info(`[CRON] El Profeta buscando renovaciones futuras...`);
       try {
@@ -238,7 +238,9 @@ export const iniciarCronJobs = () => {
       try {
         const total = await asistenciaCronService.sincronizarAlumnosNuevosConReprogramaciones();
         if (total > 0) {
-          logger.info(`[SINCRONIZADOR] Se alinearon ${total} alumnos nuevos con reprogramaciones previas.`);
+          logger.info(
+            `[SINCRONIZADOR] Se alinearon ${total} alumnos nuevos con reprogramaciones previas.`
+          );
         }
       } catch (error) {
         logger.error('[CRON ERROR] Falló El Sincronizador Dinámico:', error);
