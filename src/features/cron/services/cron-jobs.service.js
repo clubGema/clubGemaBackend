@@ -153,7 +153,7 @@ export const iniciarCronJobs = () => {
   // Objetivo: Matar inscripciones con pagos parciales justo antes de que el Profeta les genere nueva deuda.
   // ------------------------------------------------------------------
   cron.schedule(
-    '* * * * *',
+    '15 0 * * *',
     async () => {
       logger.info(`[CRON] El Liquidador buscando morosos parciales...`);
       try {
