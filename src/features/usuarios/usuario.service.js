@@ -377,16 +377,32 @@ export const usuarioService = {
     });
   },
 
-  getUsersByRol: async (rolOrId) => {
+  getUsersByRol: async (rolOrId, sedeId) => {
     const isNumber = !Number.isNaN(Number(rolOrId));
 
+    let whereClause = {
+      activo: true,
+      roles: isNumber
+        ? { id: Number.parseInt(rolOrId) }
+        : { nombre: { equals: rolOrId, mode: 'insensitive' } },
+    };
+
+    if (sedeId) {
+      whereClause.alumnos = {
+        inscripciones: {
+          some: {
+            horarios_clases: {
+              canchas: {
+                sede_id: Number.parseInt(sedeId),
+              },
+            },
+          },
+        },
+      };
+    }
+
     const usuarios = await prisma.usuarios.findMany({
-      where: {
-        activo: true,
-        roles: isNumber
-          ? { id: Number.parseInt(rolOrId) }
-          : { nombre: { equals: rolOrId, mode: 'insensitive' } },
-      },
+      where: whereClause,
       include: {
         roles: true,
         // Solo trae los datos del rol, no vuelvas a incluir 'usuarios' dentro de ellos

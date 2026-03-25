@@ -41,7 +41,8 @@ export const usuarioController = {
   }),
 
   getUsersByRol: catchAsync(async (req, res) => {
-    const usuarios = await usuarioService.getUsersByRol(req.params.rol);
+    const { sede_id } = req.query;
+    const usuarios = await usuarioService.getUsersByRol(req.params.rol, sede_id);
 
     return apiResponse.success(res, {
       message: `Usuarios con rol ${req.params.rol} obtenidos exitosamente`,

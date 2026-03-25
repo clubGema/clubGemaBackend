@@ -60,7 +60,9 @@ const SEDE_SELECT_FIELDS = {
  */
 const buildWhereFilters = ({ activo, distrito, tipo_instalacion }) => {
   const where = {};
-  if (activo !== undefined) where.activo = activo;
+  if (activo !== undefined) {
+    where.activo = activo === true || activo === 'true';
+  }
   if (distrito) {
     where.direcciones = { distrito: { contains: distrito, mode: 'insensitive' } };
   }
@@ -125,7 +127,10 @@ export const sedeService = {
   },
 
   getAllSedes: async (filters = {}) => {
-    const { page = 1, limit = 10, ...rest } = filters;
+    const page = Number(filters.page) || 1;
+    const limit = Number(filters.limit) || 10;
+    const { page: _p, limit: _l, ...rest } = filters;
+    
     const where = buildWhereFilters(rest);
     const skip = (page - 1) * limit;
 
@@ -155,7 +160,10 @@ export const sedeService = {
   },
 
   getCanchaForSedeCount: async (filters = {}) => {
-    const { page = 1, limit = 10, ...rest } = filters;
+    const page = Number(filters.page) || 1;
+    const limit = Number(filters.limit) || 10;
+    const { page: _p, limit: _l, ...rest } = filters;
+    
     const where = buildWhereFilters(rest);
     const skip = (page - 1) * limit;
 
@@ -177,8 +185,8 @@ export const sedeService = {
       prisma.sedes.count({ where }),
     ]);
 
-    const sedesConConteo = sedes.map(({ _count, ...rest }) => ({
-      ...rest,
+    const sedesConConteo = sedes.map(({ _count, ...restSede }) => ({
+      ...restSede,
       canchas_count: _count?.canchas ?? 0,
     }));
 
