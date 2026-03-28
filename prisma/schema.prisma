@@ -48,6 +48,7 @@ model alumnos_contactos {
   alumnos         alumnos  @relation(fields: [alumno_id], references: [usuario_id], onDelete: NoAction, onUpdate: NoAction)
 }
 
+
 model canchas {
   id              Int               @id @default(autoincrement())
   sede_id         Int
