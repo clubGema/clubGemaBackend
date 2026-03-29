@@ -192,101 +192,124 @@ export const sedeService = {
     return { sedes: sedesConConteo, total, page, limit, totalPages: Math.ceil(total / limit) };
   },
 
-  updateSede: async (id, sedeData) => {
-    return await prisma.$transaction(async (tx) => {
-      // 1. Actualizar datos de Sede y Dirección
-      await tx.sedes.update({
-        where: { id },
-        data: {
-          ...(sedeData.nombre && { nombre: sedeData.nombre }),
-          ...(sedeData.telefono_contacto !== undefined && {
-            telefono_contacto: sedeData.telefono_contacto,
-          }),
-          ...(sedeData.tipo_instalacion !== undefined && {
-            tipo_instalacion: sedeData.tipo_instalacion,
-          }),
-          ...(sedeData.activo !== undefined && { activo: sedeData.activo }),
-          ...(sedeData.direccion && {
-            direcciones: {
-              update: {
-                ...(sedeData.direccion.direccion_completa && {
-                  direccion_completa: sedeData.direccion.direccion_completa,
-                }),
-                ...(sedeData.direccion.distrito && {
-                  distrito: sedeData.direccion.distrito,
-                }),
-                ...(sedeData.direccion.ciudad && {
-                  ciudad: sedeData.direccion.ciudad,
-                }),
-                ...(sedeData.direccion.referencia !== undefined && {
-                  referencia: sedeData.direccion.referencia,
-                }),
-              },
+ updateSede: async (id, sedeData) => {
+  return await prisma.$transaction(async (tx) => {
+    // 1. Actualizar datos de Sede y Dirección (Se mantiene igual)
+    await tx.sedes.update({
+      where: { id },
+      data: {
+        ...(sedeData.nombre && { nombre: sedeData.nombre }),
+        ...(sedeData.telefono_contacto !== undefined && {
+          telefono_contacto: sedeData.telefono_contacto,
+        }),
+        ...(sedeData.tipo_instalacion !== undefined && {
+          tipo_instalacion: sedeData.tipo_instalacion,
+        }),
+        ...(sedeData.activo !== undefined && { activo: sedeData.activo }),
+        ...(sedeData.direccion && {
+          direcciones: {
+            update: {
+              ...(sedeData.direccion.direccion_completa && {
+                direccion_completa: sedeData.direccion.direccion_completa,
+              }),
+              ...(sedeData.direccion.distrito && {
+                distrito: sedeData.direccion.distrito,
+              }),
+              ...(sedeData.direccion.ciudad && {
+                ciudad: sedeData.direccion.ciudad,
+              }),
+              ...(sedeData.direccion.referencia !== undefined && {
+                referencia: sedeData.direccion.referencia,
+              }),
             },
-          }),
+          },
+        }),
+      },
+    });
+
+    // 2. Procesar Canchas
+    if (sedeData.canchas && Array.isArray(sedeData.canchas)) {
+      const canchasExistentes = sedeData.canchas.filter((c) => c.id);
+      const canchasNuevas = sedeData.canchas.filter((c) => !c.id);
+      const idsAMantener = canchasExistentes.map((c) => c.id);
+
+      // --- CAMBIO AQUÍ: VALIDACIÓN ANTES DE BORRAR ---
+      // Buscamos qué canchas se quieren eliminar y si tienen registros
+      const canchasAELiminar = await tx.canchas.findMany({
+        where: {
+          sede_id: id,
+          id: { notIn: idsAMantener },
+        },
+        include: {
+          _count: {
+            select: { horarios_clases: true } // Asegúrate que el nombre sea igual a tu relación en el esquema
+          }
+        }
+      });
+
+      // Si alguna tiene clases/inscripciones, lanzamos error controlado
+      const conDatos = canchasAELiminar.filter(c => c._count.horarios_clases > 0);
+      if (conDatos.length > 0) {
+        throw new ApiError(
+          `No se puede quitar la cancha "${conDatos[0].nombre}" porque ya tiene inscripciones o clases programadas.`, 
+          400
+        );
+      }
+
+      // Si no tienen datos, procedemos a borrar
+      await tx.canchas.deleteMany({
+        where: {
+          sede_id: id,
+          id: { notIn: idsAMantener },
         },
       });
 
-      // 2. Procesar Canchas en paralelo (Antigravity §3.1)
-      if (sedeData.canchas && Array.isArray(sedeData.canchas)) {
-        const canchasExistentes = sedeData.canchas.filter((c) => c.id);
-        const canchasNuevas = sedeData.canchas.filter((c) => !c.id);
-
-        // BORRAMOS LAS CANCHAS QUE YA NO VIENEN EN EL PAYLOAD
-        const idsAMantener = canchasExistentes.map((c) => c.id);
-        await tx.canchas.deleteMany({
-          where: {
-            sede_id: id,
-            id: { notIn: idsAMantener },
-          },
-        });
-
-        // Updates en paralelo
-        if (canchasExistentes.length > 0) {
-          await Promise.all(
-            canchasExistentes.map((c) =>
-              tx.canchas.update({
-                where: { id: c.id },
-                data: { nombre: c.nombre, descripcion: c.descripcion || '' },
-              })
-            )
-          );
-        }
-
-        // Nuevas: un solo query para verificar duplicados + createMany
-        if (canchasNuevas.length > 0) {
-          const nombresNuevos = canchasNuevas.map((c) => c.nombre.toLowerCase());
-          const yaExisten = await tx.canchas.findMany({
-            where: {
-              sede_id: id,
-              nombre: { in: nombresNuevos, mode: 'insensitive' },
-            },
-            select: { nombre: true },
-          });
-          const nombresExistentes = new Set(yaExisten.map((c) => c.nombre.toLowerCase()));
-          const realmNuevas = canchasNuevas.filter(
-            (c) => !nombresExistentes.has(c.nombre.toLowerCase())
-          );
-
-          if (realmNuevas.length > 0) {
-            await tx.canchas.createMany({
-              data: realmNuevas.map((c) => ({
-                nombre: c.nombre,
-                descripcion: c.descripcion || '',
-                sede_id: id,
-              })),
-            });
-          }
-        }
+      // Updates en paralelo (Se mantiene igual)
+      if (canchasExistentes.length > 0) {
+        await Promise.all(
+          canchasExistentes.map((c) =>
+            tx.canchas.update({
+              where: { id: c.id },
+              data: { nombre: c.nombre, descripcion: c.descripcion || '' },
+            })
+          )
+        );
       }
 
-      // 3. Retornar la sede actualizada
-      return await tx.sedes.findUnique({
-        where: { id },
-        select: SEDE_SELECT_FIELDS,
-      });
+      // Crear nuevas (Se mantiene igual)
+      if (canchasNuevas.length > 0) {
+        const nombresNuevos = canchasNuevas.map((c) => c.nombre.toLowerCase());
+        const yaExisten = await tx.canchas.findMany({
+          where: {
+            sede_id: id,
+            nombre: { in: nombresNuevos, mode: 'insensitive' },
+          },
+          select: { nombre: true },
+        });
+        const nombresExistentes = new Set(yaExisten.map((c) => c.nombre.toLowerCase()));
+        const realmNuevas = canchasNuevas.filter(
+          (c) => !nombresExistentes.has(c.nombre.toLowerCase())
+        );
+
+        if (realmNuevas.length > 0) {
+          await tx.canchas.createMany({
+            data: realmNuevas.map((c) => ({
+              nombre: c.nombre,
+              descripcion: c.descripcion || '',
+              sede_id: id,
+            })),
+          });
+        }
+      }
+    }
+
+    // 3. Retornar sede actualizada
+    return await tx.sedes.findUnique({
+      where: { id },
+      select: SEDE_SELECT_FIELDS,
     });
-  },
+  });
+},
 
   updateDefuseSede: async (id) => {
     return await prisma.sedes.update({
