@@ -58,4 +58,10 @@ router.post(
   asistenciaController.marcarAsistenciaMasiva
 );
 
+router.post(
+  '/previsualizar-fechas',
+  authorize('Administrador', 'Coordinador', 'Alumno'),
+  asistenciaController.previsualizarClasesFuturas
+)
+
 export default router;

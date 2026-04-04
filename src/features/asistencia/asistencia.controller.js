@@ -97,7 +97,7 @@ const listarClasesHoy = catchAsync(async (req, res) => {
     message: 'Agenda del día recuperada exitosamente.',
     data: clases,
   });
-  
+
 });
 
 const obtenerEstadisticasAlumno = catchAsync(async (req, res) => {
@@ -112,6 +112,17 @@ const obtenerEstadisticasAlumno = catchAsync(async (req, res) => {
   });
 });
 
+const previsualizarClasesFuturas = catchAsync(async (req, res) => {
+  const { dia_semana } = req.body;
+
+  const fechas = await asistenciaService.previsualizarfechasFuturas(dia_semana);
+
+  return apiResponse.success(res, {
+    data: fechas,
+    message: 'fechas para previsualizar obtenidas.',
+  })
+})
+
 
 export const asistenciaController = {
   //marcarAsistencia,
@@ -121,4 +132,5 @@ export const asistenciaController = {
   listarAgenda,
   marcarAsistenciaMasiva,
   obtenerEstadisticasAlumno,
+  previsualizarClasesFuturas,
 };

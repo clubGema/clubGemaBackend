@@ -120,9 +120,13 @@ export const asistenciaService = {
     const fechaLimite = new Date(fechaInicioCalculo);
     fechaLimite.setDate(fechaLimite.getDate() + (DIAS_CICLO - 1));
 
-    const fechasClases = calcularProximasFechas(fechaInicioCalculo, dia_semana, fechaLimite);
+    let fechasTotales = [];
 
-    return fechasClases;
+    for (const dia of dia_semana) {
+      const fechasClases = calcularProximasFechas(fechaInicioCalculo, dia, fechaLimite);
+      fechasTotales.push(fechasClases)
+    }
+    return fechasTotales;
   },
 
   // NO SE USA
