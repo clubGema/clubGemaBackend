@@ -8,6 +8,11 @@ import { recuperacionService } from '../recuperaciones/recuperacion.service.js';
 const calcularProximasFechas = (fechaInicio, diaSemanaClase, fechaLimite) => {
   const fechas = [];
   const fechaActual = new Date(fechaInicio);
+  const diaSemanaNormalizado = diaSemanaClase === 7 ? 0 : Number(diaSemanaClase);
+
+  if (!Number.isInteger(diaSemanaNormalizado) || diaSemanaNormalizado < 0 || diaSemanaNormalizado > 6) {
+    throw new Error(`Dia de semana invalido para generar clases: ${diaSemanaClase}`);
+  }
 
   // 🔥 CORRECCIÓN DE ZONA HORARIA (Mediodía para evitar saltos de día)
   fechaActual.setHours(12, 0, 0, 0);
@@ -17,9 +22,8 @@ const calcularProximasFechas = (fechaInicio, diaSemanaClase, fechaLimite) => {
 
   // 1. Buscamos el primer día de clase válido que sea >= fechaInicio
   // Si la fechaInicio ya coincide con diaSemanaClase, se queda ahí.
-  while (fechaActual.getDay() !== diaSemanaClase) {
-    fechaActual.setDate(fechaActual.getDate() + 1);
-  }
+  const diasHastaPrimeraClase = (diaSemanaNormalizado - fechaActual.getDay() + 7) % 7;
+  fechaActual.setDate(fechaActual.getDate() + diasHastaPrimeraClase);
 
   // 2. Generamos fechas MIENTRAS no superemos el límite de los 30 días
   // Importante: Si la primera fecha encontrada ya se pasó del límite, no agrega nada.

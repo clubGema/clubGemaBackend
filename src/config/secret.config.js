@@ -26,6 +26,8 @@ const normalizeCorsOrigin = (origin) => origin.trim().replace(/\/$/, '');
 export const CORS_ORIGIN = rawCorsOrigins.split(',').map(normalizeCorsOrigin).filter(Boolean);
 export const CORS_CREDENTIALS =
   process.env.CORS_CREDENTIALS === 'true' || process.env.CORS_CREDENTIALS === true;
+export const COOKIE_CROSS_SITE =
+  process.env.COOKIE_CROSS_SITE === 'true' || process.env.COOKIE_CROSS_SITE === true;
 
 // ============================================
 // FRONTEND CONFIGURATION
