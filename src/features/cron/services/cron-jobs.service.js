@@ -183,11 +183,11 @@ export const iniciarCronJobs = () => {
   );
 
   // ------------------------------------------------------------------
-  // TAREA NUEVA: ALERTA VENCIMIENTO INMINENTE (Todos los días a las 10:15 AM) 15 10 * * *
+  // TAREA NUEVA: ALERTA VENCIMIENTO INMINENTE (Todos los dias a las 3:30 PM) 30 15 * * *
   // Objetivo: Enviar WhatsApp 1 día antes de que se cumplan los 30 días + tolerancia.
   // ------------------------------------------------------------------
   cron.schedule(
-    '15 10 * * *',
+    '30 15 * * *',
     async () => {
       logger.info(`[CRON] Buscando alumnos con vencimiento inminente...`);
       try {
