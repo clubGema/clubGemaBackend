@@ -108,7 +108,7 @@ export const iniciarCronJobs = () => {
   // ------------------------------------------------------------------
 
   cron.schedule(
-    '15 15 * * *',
+    '30 8 * * *',
     async () => {
       logger.info(`[CRON] Buscando cumpleañeros de hoy: ${new Date().toISOString()}`);
       try {
@@ -187,7 +187,7 @@ export const iniciarCronJobs = () => {
   // Objetivo: Enviar WhatsApp 1 día antes de que se cumplan los 30 días + tolerancia.
   // ------------------------------------------------------------------
   cron.schedule(
-    '30 15 * * *',
+    '30 10 * * *',
     async () => {
       logger.info(`[CRON] Buscando alumnos con vencimiento inminente...`);
       try {
