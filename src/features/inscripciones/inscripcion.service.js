@@ -17,7 +17,7 @@ export const inscripcionService = {
   // 🚀 MOTOR MAESTRO DE INSCRIPCIÓN: GEMA ACADEMY (VERSIÓN FINAL)
   // =================================================================
   inscribirPaquete: async (data) => {
-    const { alumno_id, horario_ids } = data;
+    const { alumno_id, horario_ids, fecha_inicio_electiva, incluye_camiseta } = data; // CAMBIO CAMBIO
 
     try {
       // 1. Validación de estructura de entrada
@@ -100,7 +100,12 @@ export const inscripcionService = {
         let detalleCobro = [];
         
         // 🔥 AQUI DECLARAMOS LA VARIABLE PARA QUE NO FALLE
-        const hoyInscripcion = new Date();
+        const hoyInscripcion = new Date();  
+
+
+       //CAMBIO CAMBIO CAMBIO
+       // ✅ La forma correcta (usando la variable que ya extrajiste):
+const inicioElectivo = fecha_inicio_electiva ? new Date(fecha_inicio_electiva) : new Date();
 
         for (const idHorario of horario_ids) {
           const horario = await Validators.validarAforoHorario(tx, idHorario, fechaLimiteZombie);
@@ -125,12 +130,19 @@ export const inscripcionService = {
               horario_id: idHorario,
               estado: 'PENDIENTE_PAGO',
               // 🔥 MAGIA DE SINCRONIZACIÓN Y CREACIÓN
-              fecha_inscripcion: (esInscripcionAdicional && fechaMadre) ? fechaMadre : hoyInscripcion,
+              fecha_inscripcion: (esInscripcionAdicional && fechaMadre) ? fechaMadre : inicioElectivo,  //CAMBIO CAMBIO CAMBIO cambiar hoyInscripcion por inicio efectivo
             },
             include: { horarios_clases: true }
           });
           inscripcionesCreadas.push(nuevaInscripcion);
         }
+
+//  CAMBIO CAMBIO CAMBIO 
+        if (incluye_camiseta) {
+          totalCobrar += 50;
+          detalleCobro.push("Camiseta Oficial Gema (S/ 50.00)");
+        }
+
         // 💸 PASO 6: GENERAR DEUDA Y APLICAR BENEFICIOS
         if (totalCobrar > 0) {
           const nuevaCuenta = await tx.cuentas_por_cobrar.create({

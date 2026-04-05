@@ -237,6 +237,10 @@ export const pagosService = {
           });
 
           for (const inscripcion of inscripciones) {
+          
+            //CAMBIO CAMBIO CAMBIO
+             const fechaInicioReal = inscripcion.fecha_inscripcion; 
+
             await tx.inscripciones.update({
               where: { id: inscripcion.id },
               data: { estado: 'ACTIVO', actualizado_en: new Date() },
@@ -247,7 +251,7 @@ export const pagosService = {
               dia_semana: inscripcion.horarios_clases.dia_semana,
               usuario_admin_id: Number.parseInt(usuario_admin_id),
               coordinador_id: inscripcion.horarios_clases.coordinador_id,
-              fecha_inicio: new Date(),
+              fecha_inicio: fechaInicioReal,   // const fechaInicioReal //CAMBIO CAMBIO CAMBIO
             });
           }
         }
