@@ -31,4 +31,13 @@ export const horarioController = {
     await horarioService.deleteHorario(req.params.id);
     return apiResponse.noContent(res);
   }),
+
+  getHorariosBySede: catchAsync(async (req, res) => {
+    const { sedeId } = req.params;
+    const horarios = await horarioService.getHorariosBySede(sedeId);
+    return apiResponse.success(res, {
+      message: 'Horarios por sede obtenidos.',
+      data: horarios,
+    });
+  }),
 };

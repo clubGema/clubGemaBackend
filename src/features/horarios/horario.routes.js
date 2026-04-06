@@ -36,4 +36,11 @@ router.delete(
   horarioController.deleteHorario
 );
 
+router.get(
+  '/:sedeId',
+  authenticate,
+  authorize('Administrador'),
+  horarioController.getHorariosBySede
+)
+
 export default router;

@@ -318,4 +318,30 @@ export const horarioService = {
       throw error;
     }
   },
+
+  getHorariosBySede: async (sedeId) => {
+    const horarios = await prisma.horarios_clases.findMany({
+      where: {
+        activo: true,
+        canchas: {
+          sede_id: Number(sedeId),
+        }
+      },
+      include: {
+        canchas: {
+          include: {
+            sedes: {
+              select: {
+                nombre: true,
+              }
+            }
+          }
+        }
+      },
+    });
+
+    if (horarios.length === 0) throw new ApiError('Esta sede no existe o no hay horarios en dicha sede', 404);
+
+    return horarios;
+  }
 };
