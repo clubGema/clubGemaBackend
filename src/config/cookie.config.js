@@ -1,4 +1,10 @@
-import { NODE_ENV, REFRESH_TOKEN_EXPIRATION_DAYS, JWT_EXPIRES_IN, COOKIE_CROSS_SITE } from './secret.config.js';
+import {
+  NODE_ENV,
+  REFRESH_TOKEN_EXPIRATION_DAYS,
+  JWT_EXPIRES_IN,
+  COOKIE_CROSS_SITE,
+  COOKIE_PARTITIONED,
+} from './secret.config.js';
 import ms from 'ms';
 
 const ONE_MINUTE = 60 * 1000;
@@ -15,12 +21,13 @@ export const REFRESH_TOKEN_MAX_AGE = REFRESH_TOKEN_EXPIRATION_DAYS * ONE_DAY;
 
 export const getCookieOptions = () => {
   const isProd = NODE_ENV === 'production';
-  const isCrossSite = isProd && COOKIE_CROSS_SITE;
+  const isCrossSite = COOKIE_CROSS_SITE;
+  const usePartitioned = isCrossSite && COOKIE_PARTITIONED;
   return {
     httpOnly: true,
-    secure: isProd,
+    secure: isProd || isCrossSite,
     sameSite: isCrossSite ? 'none' : 'lax',
-    ...(isCrossSite ? { partitioned: true } : {}),
+    ...(usePartitioned ? { partitioned: true } : {}),
     path: '/',
   };
 };
