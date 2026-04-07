@@ -147,6 +147,7 @@ const cancelarRecuperacion = async (alumnoId, recuperacionId) => {
 
   // 3. Lógica del Reloj (Validación de 1 hora)
   const ahora = new Date();
+  ahora.setHours(ahora.getHours() - 5);
 
   // Armamos la fecha y hora exacta de la clase
   const fechaProg = new Date(ticket.fecha_programada);
