@@ -329,13 +329,16 @@ export const horarioService = {
       },
       include: {
         canchas: {
-          include: {
+          select: {
             sedes: {
               select: {
                 nombre: true,
               }
             }
           }
+        },
+        niveles_entrenamiento: {
+          select: { nombre: true }
         }
       },
     });

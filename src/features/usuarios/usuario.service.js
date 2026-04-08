@@ -416,6 +416,24 @@ export const usuarioService = {
                 relacion: true,
                 telefono: true,
               }
+            },
+            inscripciones: {
+              select: {
+                horarios_clases: {
+                  select: {
+                    canchas: {
+                      select: {
+                        sedes: {
+                          select: {
+                            id: true,
+                            nombre: true,
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
             }
           }
         },

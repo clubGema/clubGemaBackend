@@ -37,7 +37,7 @@ router.delete(
 );
 
 router.get(
-  '/:sedeId',
+  '/sede/:sedeId',
   authenticate,
   authorize('Administrador'),
   horarioController.getHorariosBySede

@@ -1,4 +1,5 @@
 import { inscripcionService } from './inscripcion.service.js';
+import { apiResponse } from '../../shared/utils/response.util.js';
 
 export const inscripcionController = {
 
@@ -7,7 +8,7 @@ export const inscripcionController = {
     try {
       // req.body esperado: { "alumno_id": 16, "horario_ids": [1, 2] }
       const nuevaInscripcion = await inscripcionService.inscribirPaquete(req.body);
-      
+
       res.status(201).json({
         status: 'success',
         message: '¡Inscripción de paquete exitosa!',
@@ -26,8 +27,8 @@ export const inscripcionController = {
       // 2. 🛡️ CAPTURA DE MUROS DE NEGOCIO (Validaciones del Service)
       // Captura: Límite superado, Muro de Deuda, Bloqueo de Ciclo, etc.
       if (
-        error.message.includes('⛔') || 
-        error.message.includes('LÍMITE') || 
+        error.message.includes('⛔') ||
+        error.message.includes('LÍMITE') ||
         error.message.includes('deuda') ||
         error.message.includes('recuperaciones')
       ) {
@@ -85,7 +86,7 @@ export const inscripcionController = {
     try {
       const { alumnoId } = req.params;
       const data = await inscripcionService.obtenerPorAlumno(alumnoId);
-      
+
       res.status(200).json({
         status: 'success',
         data
@@ -128,14 +129,14 @@ export const inscripcionController = {
       });
     }
   },
-  
+
 
   // Finalización voluntaria solicitada por el alumno
   finalizarVoluntaria: async (req, res) => {
     try {
       const { id } = req.params;
       const resultado = await inscripcionService.finalizarInscripcionVoluntaria(id);
-      
+
       res.status(200).json({
         status: 'success',
         message: resultado.mensaje,
@@ -151,11 +152,11 @@ export const inscripcionController = {
     }
   },
 
- // 🔥 CORRECCIÓN: Método estandarizado para cancelar reservas pendientes
+  // 🔥 CORRECCIÓN: Método estandarizado para cancelar reservas pendientes
   cancelarReserva: async (req, res) => {
     try {
       const { id } = req.params;
-      
+
       // Llamamos al servicio que limpia inscripción + deuda + beneficios
       const resultado = await inscripcionService.cancelarReservaPendiente(id);
 
@@ -172,5 +173,40 @@ export const inscripcionController = {
       });
     }
   },
-  
+
+  listarNoFinalizadasPorAlumno: async (req, res) => {
+    try {
+      const { alumnoId } = req.params;
+      const data = await inscripcionService.obtenerNoFinalizadasPorAlumno(alumnoId);
+
+      res.status(200).json({
+        status: 'success',
+        data
+      });
+    } catch (error) {
+      res.status(400).json({
+        status: 'error',
+        message: error.message
+      });
+    }
+  },
+
+  updateInscripcion: async (req, res) => {
+    try {
+      const data = req.body;
+      const updateInsc = await inscripcionService.updateInscripcion(data);
+      return apiResponse.success(res, {
+        data: updateInsc,
+        message: 'Horario de inscripción actualizado correctamente.'
+      })
+    } catch (e) {
+      console.error(e)
+      return apiResponse.error(
+        res,
+        e.message || 'Error interno',
+        e.statusCode || 500
+      )
+    }
+  }
+
 };

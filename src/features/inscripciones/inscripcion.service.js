@@ -3,6 +3,8 @@ import { prisma } from '../../config/database.config.js';
 import * as Utils from './utils/inscripcion.util.js';
 import * as Validators from './validators/inscripcion.validator.js';
 import * as Logic from './logic/inscripcion.logic.js';
+import { asistenciaService } from '../asistencia/asistencia.service.js';
+import { ApiError } from '../../shared/utils/error.util.js';
 
 // 🔥 IMPORTAMOS DAYJS Y CONFIGURAMOS LIMA PARA LOS LOGS 🔥
 import dayjs from 'dayjs';
@@ -31,7 +33,7 @@ export const inscripcionService = {
         // 🕵️‍♂️ PASO 1: DETECTIVE DE RÉGIMEN Y CICLO
         const esAlumnoLegacy = await Logic.detectarRegimenAlumno(tx, alumno_id);
         const cicloInfo = await Logic.calcularCicloUpgrade(tx, alumno_id);
-        
+
         // 🔥 MAGIA DE SINCRONIZACIÓN: Extraemos ambas fechas del nuevo objeto
         const fechaCorte = cicloInfo ? cicloInfo.fechaCorte : null;
         const fechaMadre = cicloInfo ? cicloInfo.fechaMadre : null;
@@ -98,14 +100,14 @@ export const inscripcionService = {
         const inscripcionesCreadas = [];
         let totalCobrar = 0;
         let detalleCobro = [];
-        
+
         // 🔥 AQUI DECLARAMOS LA VARIABLE PARA QUE NO FALLE
-        const hoyInscripcion = new Date();  
+        const hoyInscripcion = new Date();
 
 
-       //CAMBIO CAMBIO CAMBIO
-       // ✅ La forma correcta (usando la variable que ya extrajiste):
-const inicioElectivo = fecha_inicio_electiva ? new Date(fecha_inicio_electiva) : new Date();
+        //CAMBIO CAMBIO CAMBIO
+        // ✅ La forma correcta (usando la variable que ya extrajiste):
+        const inicioElectivo = fecha_inicio_electiva ? new Date(fecha_inicio_electiva) : new Date();
 
         for (const idHorario of horario_ids) {
           const horario = await Validators.validarAforoHorario(tx, idHorario, fechaLimiteZombie);
@@ -137,7 +139,7 @@ const inicioElectivo = fecha_inicio_electiva ? new Date(fecha_inicio_electiva) :
           inscripcionesCreadas.push(nuevaInscripcion);
         }
 
-//  CAMBIO CAMBIO CAMBIO 
+        //  CAMBIO CAMBIO CAMBIO 
         if (incluye_camiseta) {
           totalCobrar += 50;
           detalleCobro.push("Camiseta Oficial Gema (S/ 50.00)");
@@ -362,7 +364,40 @@ const inicioElectivo = fecha_inicio_electiva ? new Date(fecha_inicio_electiva) :
       include: {
         horarios_clases: {
           include: {
-            canchas: true,
+            canchas: {
+              include: {
+                sedes: {
+                  select: {
+                    nombre: true,
+                  }
+                }
+              }
+            },
+            niveles_entrenamiento: true,
+            coordinadores: { include: { usuarios: true } }
+          }
+        }
+      }
+    });
+  },
+  obtenerNoFinalizadasPorAlumno: async (alumnoId) => {
+    return await prisma.inscripciones.findMany({
+      where: {
+        alumno_id: Number.parseInt(alumnoId),
+        estado: { not: 'FINALIZADO' }
+      },
+      include: {
+        horarios_clases: {
+          include: {
+            canchas: {
+              include: {
+                sedes: {
+                  select: {
+                    nombre: true,
+                  }
+                }
+              }
+            },
             niveles_entrenamiento: true,
             coordinadores: { include: { usuarios: true } }
           }
@@ -456,7 +491,7 @@ const inicioElectivo = fecha_inicio_electiva ? new Date(fecha_inicio_electiva) :
     });
   },
 
- cancelarReservaPendiente: async (id) => {
+  cancelarReservaPendiente: async (id) => {
     return await prisma.$transaction(async (tx) => {
       // 1. Identificar la inscripción "semilla"
       const inscripcionSemilla = await tx.inscripciones.findUnique({
@@ -510,6 +545,76 @@ const inicioElectivo = fecha_inicio_electiva ? new Date(fecha_inicio_electiva) :
       return { success: true, mensaje: 'Paquete de reserva cancelado íntegramente.' };
     });
   },
+
+  updateInscripcion: async (data) => {
+    const { alumnoId, inscripcionId, horarioId, adminId } = data;
+
+    if (!alumnoId) throw new ApiError('El campo alumnoId es requerido', 400);
+    if (!inscripcionId) throw new ApiError('El campo inscripcionId es requerido', 400);
+    if (!horarioId) throw new ApiError('El campo horarioId es requerido', 400);
+    // if (!adminId) throw new ApiError('El campo adminId es requerido', 400); //No es necesario
+
+    return await prisma.$transaction(async (tx) => {
+      const insc = await tx.inscripciones.findUnique({
+        where: { alumno_id: alumnoId, id: inscripcionId },
+      })
+      if (!insc) throw new ApiError('No existe inscripción con esa ID', 404);
+
+      const inscTotales = await inscripcionService.obtenerNoFinalizadasPorAlumno(insc.alumno_id)
+      const yaExiste = inscTotales.some(i => i.horario_id === horarioId)
+      if (yaExiste) throw new ApiError('El horario destino ya pertenece a una inscripción del alumno.', 400);
+
+      const count = await asistenciaService.eliminarClases(tx, insc.id, insc.fecha_inscripcion_original);
+      console.log(`Se eliminaron ${count} registros de asistencia.`)
+
+      const updateInsc = await tx.inscripciones.update({
+        where: { alumno_id: insc.alumno_id, id: insc.id },
+        data: {
+          horario_id: horarioId,
+          fecha_inscripcion: insc.fecha_inscripcion_original, //Para asegurar que se reinicie la fecha de inscripción con la original (PARA CASOS AISLADOS DE REPROGRAMACIÓN MASIVA)
+          actualizado_en: new Date()
+        },
+        include: {
+          horarios_clases: true
+        }
+      })
+
+      await asistenciaService.generarClasesFuturas(tx, {
+        inscripcion_id: updateInsc.id,
+        dia_semana: updateInsc.horarios_clases.dia_semana,
+        usuario_admin_id: Number.parseInt(adminId),
+        coordinador_id: updateInsc.horarios_clases.coordinador_id,
+        fecha_inicio: updateInsc.fecha_inscripcion,
+      })
+
+      const hoy = new Date()
+      hoy.setHours(12, 0, 0, 0)
+      await tx.registros_asistencia.updateMany({
+        where: {
+          inscripcion_id: updateInsc.id,
+          fecha: {
+            gte: updateInsc.fecha_inscripcion,
+            lt: hoy
+          }
+        },
+        data: {
+          estado: 'PRESENTE'
+        }
+      })
+
+      await tx.notificaciones.create({
+        data: {
+          alumno_id: updateInsc.alumno_id,
+          titulo: `Cambio de Horario por el Administrador`,
+          mensaje: `Tu horario ha sido modificado, verifica tu plan de entrenamiento.`,
+          tipo: 'WARNING',
+          categoria: 'SISTEMA',
+        }
+      });
+
+      return updateInsc
+    });
+  }
 
 };
 

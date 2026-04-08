@@ -27,4 +27,11 @@ router.patch(
   inscripcionController.cancelarReserva
 );
 
+router.get('/alumno-no-finalizadas/:alumnoId', inscripcionController.listarNoFinalizadasPorAlumno);
+
+router.put(
+  '/horario-inscripcion',
+  inscripcionController.updateInscripcion
+)
+
 export default router;
