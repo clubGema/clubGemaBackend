@@ -132,7 +132,8 @@ export const inscripcionService = {
               horario_id: idHorario,
               estado: 'PENDIENTE_PAGO',
               // 🔥 MAGIA DE SINCRONIZACIÓN Y CREACIÓN
-              fecha_inscripcion: (esInscripcionAdicional && fechaMadre) ? fechaMadre : inicioElectivo,  //CAMBIO CAMBIO CAMBIO cambiar hoyInscripcion por inicio efectivo
+              fecha_inscripcion: (esInscripcionAdicional && fechaMadre) ? fechaMadre : inicioElectivo,
+              fecha_inscripcion_original: (esInscripcionAdicional && fechaMadre) ? fechaMadre : inicioElectivo, //CAMBIO CAMBIO CAMBIO cambiar hoyInscripcion por inicio efectivo
             },
             include: { horarios_clases: true }
           });
