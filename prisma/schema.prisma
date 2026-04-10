@@ -154,8 +154,6 @@ model inscripciones {
   alumnos                       alumnos                @relation(fields: [alumno_id], references: [usuario_id], onDelete: NoAction, onUpdate: NoAction)
   horarios_clases               horarios_clases        @relation(fields: [horario_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   registros_asistencia          registros_asistencia[]
-
-  @@unique([alumno_id, horario_id], map: "unica_inscripcion_alumno")
 }
 
 model metodos_pago {

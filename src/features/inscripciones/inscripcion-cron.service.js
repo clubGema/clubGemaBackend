@@ -389,18 +389,29 @@ class InscripcionCronService {
         // =============================================
         if (usuario.telefono_personal) {
           try {
+            let resultadoWA = { success: false, sid: null };
             if (TWILIO_TEMPLATE_PAGO_PARCIAL_SID) {
               const variables = { 1: usuario.nombres };
-              await twilioProvider.sendTemplateMessage(
+              resultadoWA = await twilioProvider.sendTemplateMessage(
                 usuario.telefono_personal,
                 TWILIO_TEMPLATE_PAGO_PARCIAL_SID,
                 variables
               );
             } else {
               const mensaje = `Hola ${usuario.nombres}, te recordamos que tienes un saldo pendiente (pago parcial) en Club Gema. Por favor regularízalo antes del cierre de tu ciclo para no perder tus beneficios.`;
-              await twilioProvider.sendWhatsAppMessage(usuario.telefono_personal, mensaje);
+              resultadoWA = await twilioProvider.sendWhatsAppMessage(
+                usuario.telefono_personal,
+                mensaje
+              );
             }
-            totalWhatsApp++;
+
+            if (resultadoWA.success) {
+              totalWhatsApp++;
+            } else {
+              logger.warn(
+                `[WA WARN] Recordatorio parcial no enviado a ${usuario.telefono_personal} (sin éxito confirmado).`
+              );
+            }
           } catch (err) {
             logger.error(
               `[WA ERROR] No se pudo enviar recordatorio parcial a ${usuario.telefono_personal}`,

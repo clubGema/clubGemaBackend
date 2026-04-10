@@ -42,15 +42,17 @@ class CumpleanosService {
           if (TWILIO_TEMPLATE_CUMPLEANOS_SID) {
             // 🚀 PRODUCCIÓN: Usa la plantilla oficial aprobada por Meta
             const variables = { "1": usuario.nombres };
-            wpEnviado = await twilioProvider.sendTemplateMessage(
+            const wpResultado = await twilioProvider.sendTemplateMessage(
               usuario.telefono_personal,
               TWILIO_TEMPLATE_CUMPLEANOS_SID,
               variables
             );
+            wpEnviado = wpResultado.success;
           } else {
             // 🧪 SIN PLANTILLA: Envía el mensaje escrito directamente en el backend
             const mensaje = `¡Hola ${usuario.nombres}! 🎉 De parte de toda la familia de Club Gema queremos desearte un muy ¡Feliz Cumpleaños! 🎂 Que disfrutes mucho tu día.`;
-            wpEnviado = await twilioProvider.sendWhatsAppMessage(usuario.telefono_personal, mensaje);
+            const wpResultado = await twilioProvider.sendWhatsAppMessage(usuario.telefono_personal, mensaje);
+            wpEnviado = wpResultado.success;
           }
         }
 

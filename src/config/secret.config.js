@@ -22,12 +22,19 @@ export const REFRESH_TOKEN_EXPIRATION_DAYS =
 // ============================================
 const rawCorsOrigins = process.env.CORS_ORIGIN || 'http://localhost:3000';
 const normalizeCorsOrigin = (origin) => origin.trim().replace(/\/$/, '');
+const parseBooleanEnv = (value, defaultValue = false) => {
+  if (value === undefined || value === null || value === '') return defaultValue;
+  if (typeof value === 'boolean') return value;
+  return String(value).trim().toLowerCase() === 'true';
+};
 
 export const CORS_ORIGIN = rawCorsOrigins.split(',').map(normalizeCorsOrigin).filter(Boolean);
-export const CORS_CREDENTIALS =
-  process.env.CORS_CREDENTIALS === 'true' || process.env.CORS_CREDENTIALS === true;
-export const COOKIE_CROSS_SITE =
-  process.env.COOKIE_CROSS_SITE === 'true' || process.env.COOKIE_CROSS_SITE === true;
+export const CORS_CREDENTIALS = parseBooleanEnv(process.env.CORS_CREDENTIALS, false);
+export const COOKIE_CROSS_SITE = parseBooleanEnv(process.env.COOKIE_CROSS_SITE, false);
+export const COOKIE_PARTITIONED = parseBooleanEnv(
+  process.env.COOKIE_PARTITIONED,
+  COOKIE_CROSS_SITE
+);
 
 // ============================================
 // FRONTEND CONFIGURATION
