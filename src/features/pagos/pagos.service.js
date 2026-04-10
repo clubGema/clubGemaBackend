@@ -71,8 +71,8 @@ export const pagosService = {
     });
   },
 
-// 2. VALIDAR EL PAGO (Tu lógica + Corrección de Monto + Sincronización de Fechas 🛡️)
- validarPago: async (data) => {
+  // 2. VALIDAR EL PAGO (Tu lógica + Corrección de Monto + Sincronización de Fechas 🛡️)
+  validarPago: async (data) => {
     const { pago_id, accion, usuario_admin_id, notas, monto_real_confirmado } = data;
     const esAprobado = accion === 'APROBAR';
 
@@ -143,6 +143,18 @@ export const pagosService = {
 
       // 🎓 PASO 6: Gestión de Inscripciones y Asistencias
       if (activarAlumno) {
+
+        // 1️⃣ COLOCA LA FUNCIÓN AQUÍ (O al inicio del archivo)
+    const normalizarFechaLima = (fecha) => {
+      const d = new Date(fecha);
+      if (!isNaN(d.getTime())) {
+        // Al poner las 12:00 PM, no importa si Railway le suma o resta 5 horas,
+        // SIEMPRE seguirá siendo el mismo día calendario.
+        d.setHours(12, 0, 0, 0);
+      }
+      return d;
+    };
+    
         const esRenovacion =
           pago.cuentas_por_cobrar.detalle_adicional?.includes('Renovación Automática');
 
@@ -160,14 +172,24 @@ export const pagosService = {
 
           if (inscripcionesActivas.length > 0) {
             // 🌟 Encontrar la Fecha Madre (la más antigua)
-            const fechas = inscripcionesActivas.map((i) => new Date(i.fecha_inscripcion).getTime());
+
+            const fechas = inscripcionesActivas.map((i) => {
+              const d = new Date(i.fecha_inscripcion);
+              d.setHours(12, 0, 0, 0); // Forzamos mediodía
+              return d.getTime();
+            });
+
             const fechaMadre = new Date(Math.min(...fechas));
 
             // 🕰️ Calcular fin del ciclo actual (Día 30)
             const finCicloActual = new Date(fechaMadre);
             finCicloActual.setDate(finCicloActual.getDate() + 30);
 
-            const hoy = new Date();
+
+            const hoy = new Date(new Date().toLocaleString("en-US", {timeZone: "America/Lima"}));
+hoy.setHours(12, 0, 0, 0); // Estandariza a mediodía
+
+
             let fechaInicioNuevoCiclo;
 
             if (hoy < finCicloActual) {
@@ -185,7 +207,7 @@ export const pagosService = {
             const ultimaRecuperacion = await tx.recuperaciones.findFirst({
               where: {
                 alumno_id: pago.cuentas_por_cobrar.alumno_id,
-                fecha_programada: { not: null } 
+                fecha_programada: { not: null }
               },
               orderBy: { fecha_programada: 'desc' }
             });
@@ -284,7 +306,7 @@ export const pagosService = {
         saldo_pendiente: saldoRestante,
       };
     });
-  }, 
+  },
   obtenerTodos: async () => {
     return await prisma.pagos.findMany({
       include: {
@@ -398,16 +420,16 @@ export const pagosService = {
     const pagos = await prisma.pagos.findMany({
       include: {
         cuentas_por_cobrar: {
-          include: { 
-            alumnos: { 
-              include: { 
+          include: {
+            alumnos: {
+              include: {
                 usuarios: {
-                  select: { 
-                    nombres: true, 
-                    apellidos: true, 
-                    numero_documento: true, 
-                    email: true, 
-                    telefono_personal: true 
+                  select: {
+                    nombres: true,
+                    apellidos: true,
+                    numero_documento: true,
+                    email: true,
+                    telefono_personal: true
                   }
                 },
                 _count: {
@@ -417,8 +439,8 @@ export const pagosService = {
                     }
                   }
                 }
-              } 
-            } 
+              }
+            }
           },
         },
         metodos_pago: true,
