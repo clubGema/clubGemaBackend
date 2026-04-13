@@ -43,4 +43,10 @@ router.get(
   horarioController.getHorariosBySede
 )
 
+router.get(
+  '/nivel',
+  authenticate,
+  horarioController.getHorariosByLevel
+)
+
 export default router;

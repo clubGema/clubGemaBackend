@@ -346,5 +346,30 @@ export const horarioService = {
     if (horarios.length === 0) throw new ApiError('Esta sede no existe o no hay horarios en dicha sede', 404);
 
     return horarios;
+  },
+
+  getHorariosByLevel: async (alumnoId) => {
+    const insc = await prisma.inscripciones.findFirst({
+      where: {
+        alumno_id: alumnoId,
+        estado: { not: "FINALIZADO" },
+      },
+      include: {
+        horarios_clases: {
+          select: {
+            nivel_id: true,
+          }
+        }
+      }
+    })
+    if (!insc) throw new ApiError('No hay una inscripción vigente para este usuario.', 404);
+
+    const horarios = await prisma.horarios_clases.findMany({
+      where: {
+        nivel_id: insc.horarios_clases.nivel_id,
+      },
+      select: HORARIO_SELECT,
+    });
+    return horarios.map(formatearHorario);
   }
 };

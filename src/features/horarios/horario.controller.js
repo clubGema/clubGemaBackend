@@ -40,4 +40,13 @@ export const horarioController = {
       data: horarios,
     });
   }),
+
+  getHorariosByLevel: catchAsync(async (req, res) => {
+    const { id: alumnoId } = req.user;
+    const horarios = await horarioService.getHorariosByLevel(alumnoId);
+    return apiResponse.success(res, {
+      message: 'Horarios por nivel obtenidos.',
+      data: horarios,
+    })
+  })
 };
