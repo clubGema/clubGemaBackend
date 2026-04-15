@@ -6,7 +6,7 @@ export const validarInputPago = (data) => {
 };
 export const generarMensajeResultado = (accion, esPagoCompleto, saldo) => {
   if (accion !== 'APROBAR') {
-    return '⛔ PAGO RECHAZADO. La inscripción ha vuelto a estado PENDIENTE.';
+    return '⛔ PAGO RECHAZADO. Se le envío al alumno un aviso del estado de su pago.';
   }
   if (esPagoCompleto) {
     return '✅ Deuda SALDADA. Alumno ACTIVO y limpio.';

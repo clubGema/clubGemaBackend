@@ -504,33 +504,44 @@ export const inscripcionService = {
       }
 
       // 2. Localizar la deuda vinculada (usando el tiempo de creación como nexo)
-      const deudaAsociada = await tx.cuentas_por_cobrar.findFirst({
+      const deudaAsociada = await tx.cuentas_por_cobrar.findMany({
         where: {
           alumno_id: inscripcionSemilla.alumno_id,
           estado: 'PENDIENTE',
-          creado_en: {
-            gte: new Date(inscripcionSemilla.fecha_inscripcion.getTime() - 30000),
-            lte: new Date(inscripcionSemilla.fecha_inscripcion.getTime() + 30000),
-          },
+          alumnos: {
+            inscripciones: {
+              some: {
+                id: inscripcionSemilla.id,
+              }
+            }
+          }
         },
+        include: {
+          alumnos: {
+            select: {
+              inscripciones: {
+                select: { id: true }
+              }
+            }
+          }
+        }
       });
+      const inscAsociadas = [...new Set(deudaAsociada.flatMap(d => d.alumnos?.inscripciones?.map(i => i.id) ?? []))]
 
-      if (deudaAsociada) {
+      if (deudaAsociada.length > 0) {
         // 3. EN CASCADA: Borramos todas las inscripciones que se crearon en ese mismo instante
         // Esto elimina el "paquete" completo (los 2 o 3 horarios que eligió)
         await tx.inscripciones.deleteMany({
           where: {
+            id: { in: inscAsociadas },
             alumno_id: inscripcionSemilla.alumno_id,
             estado: 'PENDIENTE_PAGO',
-            fecha_inscripcion: {
-              gte: new Date(inscripcionSemilla.fecha_inscripcion.getTime() - 2000),
-              lte: new Date(inscripcionSemilla.fecha_inscripcion.getTime() + 2000),
-            }
           }
         });
 
+        const deudasId = deudaAsociada.map(d => d.id)
         // 4. Devolvemos beneficios si existían
-        const descuentos = await tx.descuentos_aplicados.findMany({ where: { cuenta_id: deudaAsociada.id } });
+        const descuentos = await tx.descuentos_aplicados.findMany({ where: { cuenta_id: { in: deudasId } } });
         for (const desc of descuentos) {
           await tx.beneficios_pendientes.updateMany({
             where: { alumno_id: inscripcionSemilla.alumno_id, tipo_beneficio_id: desc.tipo_beneficio_id, usado: true },
@@ -539,8 +550,8 @@ export const inscripcionService = {
         }
 
         // 5. Borramos la deuda y sus relaciones
-        await tx.descuentos_aplicados.deleteMany({ where: { cuenta_id: deudaAsociada.id } });
-        await tx.cuentas_por_cobrar.delete({ where: { id: deudaAsociada.id } });
+        await tx.descuentos_aplicados.deleteMany({ where: { cuenta_id: { in: deudasId } } });
+        await tx.cuentas_por_cobrar.deleteMany({ where: { id: { in: deudasId } } });
       }
 
       return { success: true, mensaje: 'Paquete de reserva cancelado íntegramente.' };

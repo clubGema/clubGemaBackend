@@ -145,16 +145,16 @@ export const pagosService = {
       if (activarAlumno) {
 
         // 1️⃣ COLOCA LA FUNCIÓN AQUÍ (O al inicio del archivo)
-    const normalizarFechaLima = (fecha) => {
-      const d = new Date(fecha);
-      if (!isNaN(d.getTime())) {
-        // Al poner las 12:00 PM, no importa si Railway le suma o resta 5 horas,
-        // SIEMPRE seguirá siendo el mismo día calendario.
-        d.setHours(12, 0, 0, 0);
-      }
-      return d;
-    };
-    
+        const normalizarFechaLima = (fecha) => {
+          const d = new Date(fecha);
+          if (!isNaN(d.getTime())) {
+            // Al poner las 12:00 PM, no importa si Railway le suma o resta 5 horas,
+            // SIEMPRE seguirá siendo el mismo día calendario.
+            d.setHours(12, 0, 0, 0);
+          }
+          return d;
+        };
+
         const esRenovacion =
           pago.cuentas_por_cobrar.detalle_adicional?.includes('Renovación Automática');
 
@@ -186,8 +186,8 @@ export const pagosService = {
             finCicloActual.setDate(finCicloActual.getDate() + 30);
 
 
-            const hoy = new Date(new Date().toLocaleString("en-US", {timeZone: "America/Lima"}));
-hoy.setHours(12, 0, 0, 0); // Estandariza a mediodía
+            const hoy = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Lima" }));
+            hoy.setHours(12, 0, 0, 0); // Estandariza a mediodía
 
 
             let fechaInicioNuevoCiclo;
@@ -259,9 +259,9 @@ hoy.setHours(12, 0, 0, 0); // Estandariza a mediodía
           });
 
           for (const inscripcion of inscripciones) {
-          
+
             //CAMBIO CAMBIO CAMBIO
-             const fechaInicioReal = inscripcion.fecha_inscripcion; 
+            const fechaInicioReal = inscripcion.fecha_inscripcion;
 
             await tx.inscripciones.update({
               where: { id: inscripcion.id },
@@ -278,13 +278,48 @@ hoy.setHours(12, 0, 0, 0); // Estandariza a mediodía
           }
         }
       } else if (!esAprobado) {
-        await tx.inscripciones.updateMany({
+        const deuda = await tx.cuentas_por_cobrar.findFirst({
           where: {
             alumno_id: pago.cuentas_por_cobrar.alumno_id,
-            estado: 'POR_VALIDAR',
+            estado: 'PENDIENTE',
           },
-          data: { estado: 'PENDIENTE_PAGO' },
+          orderBy: {
+            creado_en: 'desc',
+          },
+          include: { descuentos_aplicados: true },
         });
+
+        if (deuda) {
+          if (deuda.descuentos_aplicados.length > 0) {
+            for (const desc of deuda.descuentos_aplicados) {
+              await tx.beneficios_pendientes.updateMany({
+                where: {
+                  alumno_id: pago.cuentas_por_cobrar.alumno_id,
+                  tipo_beneficio_id: desc.tipo_beneficio_id,
+                  usado: true,
+                },
+                data: { usado: false },
+              });
+            }
+          }
+          await tx.descuentos_aplicados.deleteMany({
+            where: { cuenta_id: deuda.id },
+          });
+
+          const inscDeleted = await tx.inscripciones.deleteMany({
+            where: {
+              alumno_id: pago.cuentas_por_cobrar.alumno_id,
+              estado: 'POR_VALIDAR',
+            }
+          });
+
+          if (inscDeleted.count > 0) {
+            await tx.cuentas_por_cobrar.update({
+              where: { id: deuda.id },
+              data: { estado: 'RECHAZADO', }
+            });
+          }
+        }
       }
 
       // =================================================================
