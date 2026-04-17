@@ -124,23 +124,18 @@ export const claseService = {
           // A) Obtener todos los días de entrenamiento del alumno (todas sus inscripciones)
           const susInscripciones = await tx.inscripciones.findMany({
             where: { alumno_id: ins.alumno_id, estado: 'ACTIVO' },
-            select: { horario_id: true, horarios_clases: { select: { dia_semana: true } } },
+            select: { horario_id: true, horarios_clases: { select: { dia_semana: true } }, registros_asistencia: true },
           });
           const diasDelAlumno = [
             ...new Set(susInscripciones.map((s) => s.horarios_clases.dia_semana)),
           ];
 
           // B) Buscar su última clase programada actual
-          const ultimaClase = await tx.registros_asistencia.findFirst({
-            where: { inscripcion_id: ins.id },
-            orderBy: { fecha: 'desc' },
-            select: { fecha: true },
-          });
-
-          if (!ultimaClase) continue;
+          const registrosAsist = susInscripciones.flatMap(i => i.registros_asistencia.map(r => r.fecha))
+          const ultimaClase = new Date(Math.max(...registrosAsist));
 
           // C) Calcular nueva fecha de reposición (Su próximo día regular DESPUÉS del fin de ciclo)
-          const fechaFinOriginal = new Date(ultimaClase.fecha);
+          const fechaFinOriginal = new Date(ultimaClase);
           const fechaReposicion = calcularSiguienteDia(fechaFinOriginal, diasDelAlumno);
           const dateReposicionStr = formatFechaEs(fechaReposicion);
 

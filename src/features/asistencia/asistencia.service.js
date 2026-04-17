@@ -327,9 +327,10 @@ export const asistenciaService = {
                   OR: [
                     { fecha: new Date(fecha) },
                     { reprogramacion_clase_id: { not: null } }
-                  ]
+                  ],
+                  estado: { not: 'SIN_REGISTRO' },
                 }
-                : undefined,
+                : { estado: { not: 'SIN_REGISTRO' }, },
               orderBy: { fecha: 'asc' },
               select: {
                 id: true,
