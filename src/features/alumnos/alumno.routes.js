@@ -20,4 +20,10 @@ router.get(
     alumnoController.listarAlumnosResumen
 );
 
+router.get(
+    '/gestion/cortes-alumnos', // 👈 Nuevo nombre de la ruta
+    authorize('Administrador', 'Coordinador'), 
+    alumnoController.listarAlumnosResumenPorCoordinador 
+);
+
 export default router;

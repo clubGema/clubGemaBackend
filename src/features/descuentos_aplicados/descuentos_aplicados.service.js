@@ -2,7 +2,7 @@ import { prisma } from '../../config/database.config.js';
 import { ApiError } from '../../shared/utils/error.util.js';
 
 export const DescuentosAplicadosService = {
-  async aplicar({ cuenta_id, tipo_beneficio_id, admin_id, motivo }) {
+ async aplicar({ cuenta_id, tipo_beneficio_id, admin_id, motivo }) {
     // 1. Validaciones de existencia y carga de relaciones
     const cuenta = await prisma.cuentas_por_cobrar.findUnique({
       where: { id: cuenta_id },
@@ -31,7 +31,6 @@ export const DescuentosAplicadosService = {
     }
 
     // 4. Lógica de cálculo (Monto Fijo vs Porcentaje)
-    // Usamos Number() en caso que vengan tipos Decimal directamente desde Prisma
     const deudaActual = Number(cuenta.monto_final || 0);
     const valorNominal = Number(beneficio.valor_por_defecto);
 
@@ -50,7 +49,7 @@ export const DescuentosAplicadosService = {
           monto_nominal_aplicado: valorNominal,
           monto_dinero_descontado: descuentoFinal,
           motivo_detalle: motivo || `Descuento: ${beneficio.nombre}`,
-          aplicado_por: admin_id, // Tomado con seguridad desde el jwt req.user.id
+          aplicado_por: admin_id,
           fecha_aplicacion: new Date(),
         },
       });
@@ -62,13 +61,26 @@ export const DescuentosAplicadosService = {
         where: { id: cuenta_id },
         data: {
           monto_final: nuevoMonto,
-          // Si el saldo llega a cero, se marca como PAGADA
           estado: nuevoMonto <= 0.01 ? 'PAGADA' : cuenta.estado,
           actualizado_en: new Date(),
         },
       });
 
-      // Retornamos la info limpia para el apirResponse
+      // 🔥 PASO C: RE-EQUILIBRAR EL PUENTE (Sincronización de Alcancía)
+      // Buscamos cuántas inscripciones están amarradas a esta cuenta
+      const links = await tx.inscripciones_deudas_link.findMany({
+        where: { cuenta_id: cuenta_id }
+      });
+
+      if (links.length > 0) {
+        const nuevoMontoPorSlot = nuevoMonto / links.length;
+
+        await tx.inscripciones_deudas_link.updateMany({
+          where: { cuenta_id: cuenta_id },
+          data: { monto_asignado: nuevoMontoPorSlot }
+        });
+      }
+
       return {
         descuentoFinal,
         descuento: nuevoDescuento,
@@ -117,6 +129,20 @@ export const DescuentosAplicadosService = {
           estado: nuevaDeuda > 0.01 ? 'PENDIENTE' : 'PAGADA',
         },
       });
+
+      // 🔥 PASO ADICIONAL: RE-EQUILIBRAR EL PUENTE (Al restaurar precio original)
+      const links = await tx.inscripciones_deudas_link.findMany({
+        where: { cuenta_id: descuento.cuenta_id }
+      });
+
+      if (links.length > 0) {
+        const montoRestauradoPorSlot = nuevaDeuda / links.length;
+
+        await tx.inscripciones_deudas_link.updateMany({
+          where: { cuenta_id: descuento.cuenta_id },
+          data: { monto_asignado: montoRestauradoPorSlot }
+        });
+      }
 
       return await tx.descuentos_aplicados.delete({
         where: { id: descuento_id },

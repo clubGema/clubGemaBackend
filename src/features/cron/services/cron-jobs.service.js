@@ -42,7 +42,7 @@ export const iniciarCronJobs = () => {
   // Objetivo: Cambiar a FINALIZADO o PEN-RECU según el ciclo (Madre + 30 días + tolerancia).
   // ------------------------------------------------------------------
   cron.schedule(
-    '0 1 * * *',
+    '* * * * *',
     async () => {
       logger.info(`[CRON] Iniciando revisión nocturna de ciclos: ${new Date().toISOString()}`);
       try {
@@ -58,32 +58,32 @@ export const iniciarCronJobs = () => {
   // TAREA 3: EL PROFETA (Todos los días a las 00:30 AM)  30 0 * * *
   // Objetivo: Generar la deuda del próximo mes X días antes del vencimiento.
   // ------------------------------------------------------------------
-  cron.schedule(
-    '30 0 * * *',
-    async () => {
-      logger.info(`[CRON] El Profeta buscando renovaciones futuras...`);
-      try {
-        // 1. Obtener días de anticipación
-        const param = await prisma.parametros_sistema.findUnique({
-          where: { clave: 'DIAS_ANTICIPACION_RENOVACION' },
-        });
-        const diasAnticipacion = param ? Number.parseInt(param.valor) : 5;
+  // cron.schedule(
+  //   '30 0 * * *',
+  //   async () => {
+  //     logger.info(`[CRON] El Profeta buscando renovaciones futuras...`);
+  //     try {
+  //       // 1. Obtener días de anticipación
+  //       const param = await prisma.parametros_sistema.findUnique({
+  //         where: { clave: 'DIAS_ANTICIPACION_RENOVACION' },
+  //       });
+  //       const diasAnticipacion = param ? Number.parseInt(param.valor) : 5;
 
-        // 2. Invocar al Servicio de Inscripciones
-        const renovacionesGeneradas =
-          await inscripcionService.generarRenovacionesMasivas(diasAnticipacion);
+  //       // 2. Invocar al Servicio de Inscripciones
+  //       const renovacionesGeneradas =
+  //         await inscripcionService.generarRenovacionesMasivas(diasAnticipacion);
 
-        if (renovacionesGeneradas > 0) {
-          logger.info(
-            `[PROFETA] Se generaron ${renovacionesGeneradas} deudas de renovación anticipada.`
-          );
-        }
-      } catch (error) {
-        logger.error('[CRON ERROR] Falló el Profeta:', error);
-      }
-    },
-    { timezone: 'America/Lima' }
-  );
+  //       if (renovacionesGeneradas > 0) {
+  //         logger.info(
+  //           `[PROFETA] Se generaron ${renovacionesGeneradas} deudas de renovación anticipada.`
+  //         );
+  //       }
+  //     } catch (error) {
+  //       logger.error('[CRON ERROR] Falló el Profeta:', error);
+  //     }
+  //   },
+  //   { timezone: 'America/Lima' }
+  // );
 
   // ------------------------------------------------------------------
   // TAREA 4: LA LIMPIEZA DE TICKETS (Todos los días a las 01:00 AM)
@@ -152,18 +152,18 @@ export const iniciarCronJobs = () => {
   // TAREA NUEVA: EL LIQUIDADOR DE PARCIALES (Todos los días a las 00:15 AM) 15 0 * * *
   // Objetivo: Matar inscripciones con pagos parciales justo antes de que el Profeta les genere nueva deuda.
   // ------------------------------------------------------------------
-  cron.schedule(
-    '15 0 * * *',
-    async () => {
-      logger.info(`[CRON] El Liquidador buscando morosos parciales...`);
-      try {
-        await inscripcionCronService.liquidarMorososParciales();
-      } catch (error) {
-        logger.error('[CRON ERROR] Falló el Liquidador de Parciales:', error);
-      }
-    },
-    { timezone: 'America/Lima' }
-  );
+  // cron.schedule(
+  //   '15 0 * * *',
+  //   async () => {
+  //     logger.info(`[CRON] El Liquidador buscando morosos parciales...`);
+  //     try {
+  //       await inscripcionCronService.liquidarMorososParciales();
+  //     } catch (error) {
+  //       logger.error('[CRON ERROR] Falló el Liquidador de Parciales:', error);
+  //     }
+  //   },
+  //   { timezone: 'America/Lima' }
+  // );
 
   // ------------------------------------------------------------------
   // TAREA NUEVA: RECORDATORIO 22 DÍAS (Todos los días a las 10:00 AM) 0 10 * * *

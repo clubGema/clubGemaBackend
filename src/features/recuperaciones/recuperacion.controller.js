@@ -68,6 +68,25 @@ const listarTodas = catchAsync(async (req, res) => {
     return apiResponse.success(res, { data: recuperaciones, message: 'Lista completa de recuperaciones obtenida.' });
 });
 
+const eliminarRecuperacion = catchAsync(async (req, res) => {
+    const { id } = req.params; // Extraemos el ID de la URL
+    
+    await recuperacionService.eliminarRecuperacionAdmin(id);
+
+    return apiResponse.success(res, { 
+        message: 'Recuperación eliminada permanentemente por el administrador.' 
+    });
+});
+
+const listarParaDepuracion = catchAsync(async (req, res) => {
+  const data = await recuperacionService.obtenerRecuperacionesParaDepuracion();
+  
+  return apiResponse.success(res, { 
+    data, 
+    message: 'Maestro de depuración cargado correctamente.' 
+  });
+});
+
 export const recuperacionController = {
     obtenerPendientes,
     validarElegibilidad,
@@ -75,5 +94,7 @@ export const recuperacionController = {
     cancelarRecuperacion,
     obtenerHistorial,
     listarTodas,
+    eliminarRecuperacion,
+    listarParaDepuracion,
     
 };

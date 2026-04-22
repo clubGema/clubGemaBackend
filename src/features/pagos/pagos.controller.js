@@ -149,4 +149,20 @@ export const pagosController = {
       res.status(400).json({ status: 'error', message: error.message });
     }
   },
+  obtenerDetalle: async (req, res) => {
+    try {
+      const { id } = req.params;
+      const detalle = await pagosService.obtenerDetalleCompleto(id);
+      
+      res.status(200).json({
+        status: 'success',
+        data: detalle
+      });
+    } catch (error) {
+      res.status(404).json({
+        status: 'error',
+        message: error.message
+      });
+    }
+  },
 };

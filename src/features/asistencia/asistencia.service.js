@@ -1,5 +1,6 @@
 import { prisma } from '../../config/database.config.js';
 import { recuperacionService } from '../recuperaciones/recuperacion.service.js';
+import dayjs from 'dayjs';
 
 /**
  * Función auxiliar para calcular fechas DENTRO DE UN RANGO (Dinámico) 📅
@@ -111,23 +112,6 @@ export const asistenciaService = {
     return datosAsistencia.length;
   },
 
-  previsualizarfechasFuturas: async (dia_semana) => {
-
-    const DIAS_CICLO = 30;
-
-    const fechaInicioCalculo = new Date();
-
-    const fechaLimite = new Date(fechaInicioCalculo);
-    fechaLimite.setDate(fechaLimite.getDate() + (DIAS_CICLO - 1));
-
-    let fechasTotales = [];
-
-    for (const dia of dia_semana) {
-      const fechasClases = calcularProximasFechas(fechaInicioCalculo, dia, fechaLimite);
-      fechasTotales.push(fechasClases)
-    }
-    return fechasTotales;
-  },
 
   // NO SE USA
   // marcarAsistencia: async (asistenciaId, estado, comentario) => {
@@ -317,7 +301,7 @@ export const asistenciaService = {
             alumnos: {
               include: {
                 usuarios: {
-                  select: { id: true, nombres: true, apellidos: true, numero_documento: true },
+                  select: { id: true, nombres: true, apellidos: true, numero_documento: true, fecha_nacimiento: true },
                 },
               },
             },
@@ -453,6 +437,68 @@ export const asistenciaService = {
         hora_fin: formatTime(h.hora_fin),
       };
     });
+  },
+ previsualizarfechasFuturas: async (data) => {
+    const { alumno_id, horario_ids } = data;
+    
+    try {
+      const hoy = dayjs().startOf('day');
+      let resultados = [];
+
+      // 1. Buscamos los detalles de los horarios solicitados
+      const horarios = await prisma.horarios_clases.findMany({
+        where: { id: { in: horario_ids } }
+      });
+
+      for (const horario of horarios) {
+        let fechasEsteDia = [];
+        
+        // 🚩 AJUSTE CRÍTICO PARA FORMATO 1-7: Dayjs necesita 0-6
+        const diaMapeado = horario.dia_semana === 7 ? 0 : horario.dia_semana;
+        let fechaBase = hoy.day(diaMapeado);
+
+        // Si ya pasó en la semana actual, saltamos a la próxima
+        if (fechaBase.isBefore(hoy, 'day')) {
+          fechaBase = fechaBase.add(7, 'day');
+        }
+
+        // 🕵️‍♂️ LÓGICA INTELIGENTE: Buscar la última clase de ESTE alumno en ESTE horario
+        const ultimaClase = await prisma.registros_asistencia.findFirst({
+          where: {
+            inscripciones: {
+              alumno_id: Number(alumno_id),
+              horario_id: horario.id
+            }
+          },
+          orderBy: { fecha: 'desc' }
+        });
+
+        // 🛡️ REGLA DE ENGANCHE (Vacunada contra Timezones)
+        if (ultimaClase) {
+          // ✅ FIX: Extraemos solo el "YYYY-MM-DD" en UTC puro antes de que Node/Dayjs lo conviertan a hora local y le resten 5 horas
+          const fechaStringPura = ultimaClase.fecha.toISOString().split('T')[0];
+          const fechaUltima = dayjs(fechaStringPura).startOf('day');
+          
+          // Si su última clase es hoy, mañana o en el futuro, enganchamos 7 días después
+          if (fechaUltima.isAfter(hoy.subtract(1, 'day'))) {
+            fechaBase = fechaUltima.add(7, 'day');
+          }
+        }
+        
+        // Opción A: Inicio Inmediato (o fecha de enganche segura)
+        fechasEsteDia.push(fechaBase.format('YYYY-MM-DD'));
+        
+        // Opción B: Próximo Turno (+7 días sobre la base calculada)
+        fechasEsteDia.push(fechaBase.add(7, 'day').format('YYYY-MM-DD'));
+        
+        resultados.push(fechasEsteDia);
+      }
+      
+      return resultados;
+    } catch (error) {
+      console.error("Error en previsualizarfechasFuturas:", error);
+      throw error;
+    }
   },
 
   procesarAsistenciaMasiva: async (asistencias) => {

@@ -557,6 +557,65 @@ const obtenerTodas = async () => {
     orderBy: { fecha_falta: 'desc' }
   });
 };
+// Añadir a recuperacion.service.js
+
+const eliminarRecuperacionAdmin = async (recuperacionId) => {
+  const ticket = await prisma.recuperaciones.findUnique({
+    where: { id: Number.parseInt(recuperacionId) }
+  });
+
+  if (!ticket) {
+    throw new ApiError('La recuperación no existe.', 404);
+  }
+
+  // Eliminamos el ticket. 
+  // Al eliminarlo, el alumno ya no verá el "botón" para agendar esta falta.
+  return await prisma.recuperaciones.delete({
+    where: { id: Number.parseInt(recuperacionId) }
+  });
+};
+
+// recuperacion.service.js
+
+const obtenerRecuperacionesParaDepuracion = async () => {
+  try {
+    const data = await prisma.recuperaciones.findMany({
+      include: {
+        // 1. Datos del Alumno y su Usuario (Para saber a quién borrar)
+        alumnos: {
+          include: { 
+            usuarios: { 
+              select: { 
+                nombres: true, 
+                apellidos: true 
+              } 
+            } 
+          }
+        },
+        // 2. Sede de DESTINO (Solo traerá datos si el ticket ya fue agendado)
+        horarios_clases: {
+          include: { 
+            canchas: { 
+              include: { 
+                sedes: true 
+              } 
+            }, 
+            niveles_entrenamiento: true 
+          }
+        }
+        // 🛑 Se eliminó registros_asistencia para evitar el Error 500
+        // debido a la falta de relación definida en el schema.prisma
+      },
+      orderBy: { 
+        fecha_falta: 'desc' 
+      }
+    });
+    return data;
+  } catch (error) {
+    console.error("❌ ERROR EN OBTENER DEPURECIÓN:", error);
+    throw error;
+  }
+};
 
 // Exportamos el objeto con las funciones
 export const recuperacionService = {
@@ -568,4 +627,6 @@ export const recuperacionService = {
   cancelarRecuperacion,
   obtenerHistorial,
   obtenerTodas,
+  eliminarRecuperacionAdmin,
+  obtenerRecuperacionesParaDepuracion,
 };

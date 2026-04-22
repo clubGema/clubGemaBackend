@@ -105,6 +105,7 @@ model cuentas_por_cobrar {
   catalogo_conceptos   catalogo_conceptos?    @relation(fields: [concepto_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   descuentos_aplicados descuentos_aplicados[]
   pagos                pagos[]
+  inscripciones_deudas_link inscripciones_deudas_link[]
 }
 
 model direcciones {
@@ -154,6 +155,21 @@ model inscripciones {
   alumnos                       alumnos                @relation(fields: [alumno_id], references: [usuario_id], onDelete: NoAction, onUpdate: NoAction)
   horarios_clases               horarios_clases        @relation(fields: [horario_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   registros_asistencia          registros_asistencia[]
+  id_grupo_transaccion       String?                @db.Uuid
+  inscripciones_deudas_link  inscripciones_deudas_link[]
+}
+
+model inscripciones_deudas_link {
+  id              Int                @id @default(autoincrement())
+  inscripcion_id  Int
+  cuenta_id       Int
+  monto_asignado  Decimal            @db.Decimal(10, 2)
+  creado_en       DateTime           @default(now()) @db.Timestamp(6)
+  inscripciones   inscripciones      @relation(fields: [inscripcion_id], references: [id], onDelete: Cascade)
+  cuentas_por_cobrar cuentas_por_cobrar @relation(fields: [cuenta_id], references: [id], onDelete: Cascade)
+
+  @@index([inscripcion_id])
+  @@index([cuenta_id])
 }
 
 model metodos_pago {
@@ -422,4 +438,17 @@ model feriados {
   fecha       DateTime @unique @db.Date
   descripcion String   @db.VarChar(100)
   activo      Boolean  @default(true)
+}
+model anuncios_beneficios {
+  id          Int       @id @default(autoincrement())
+  tipo        String    @db.VarChar(50) // Ej: 'RECUPERACIÓN', 'REFERIDOS'
+  titulo      String    @db.VarChar(100) // Ej: 'Trae a un amigo: -S/ 30'
+  descripcion String    @db.VarChar(255)
+  icono       String    @default("Gift") @db.VarChar(50) // Guardaremos el nombre del icono: 'RefreshCcw', 'Users', etc.
+  gradiente   String    @default("from-[#1e3a8a] to-blue-600") @db.VarChar(100)
+  badge       String    @db.VarChar(50) // Ej: 'FLEXIBILIDAD', 'PROMO'
+  activo      Boolean   @default(true)
+  orden       Int       @default(0) // Para ordenar el carrusel
+  creado_en   DateTime? @default(now()) @db.Timestamp(6)
+  actualizado_en DateTime? @default(now()) @updatedAt @db.Timestamp(6)
 }

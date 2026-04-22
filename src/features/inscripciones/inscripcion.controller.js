@@ -191,6 +191,27 @@ export const inscripcionController = {
     }
   },
 
+  // inscripcion.controller.js
+cancelarPaquetePorDeuda: async (req, res) => {
+  try {
+    const { cuentaId } = req.params;
+
+    // Llamamos al servicio radical que limpia todo usando la tabla puente
+    const resultado = await inscripcionService.eliminarPaqueteCompleto(cuentaId);
+
+    res.status(200).json({
+      status: 'success',
+      message: "Reserva eliminada y deuda anulada correctamente",
+      data: resultado
+    });
+  } catch (error) {
+    res.status(400).json({
+      status: 'error',
+      message: error.message
+    });
+  }
+},
+
   updateInscripcion: async (req, res) => {
     try {
       const data = req.body;
@@ -207,6 +228,54 @@ export const inscripcionController = {
         e.statusCode || 500
       )
     }
+  },
+  separarYFinalizar: async (req, res) => {
+  try {
+    const { id } = req.params; // Viene de la URL /1031/separar-finalizar
+    const resultado = await inscripcionService.separarFinalizarVoluntaria(id);
+
+    return apiResponse.success(res, {
+      data: resultado,
+      message: resultado.mensaje
+    });
+  } catch (e) {
+    // Si entra aquí, devuelve el 400 o 500
+    console.error("❌ ERROR EN SEPARAR_Y_FINALIZAR:", e.message);
+    return apiResponse.error(res, e.message, e.statusCode || 400);
   }
+},
+  // ... dentro de inscripcionController
+
+  actualizarFechaInicio: async (req, res) => {
+    try {
+      const { cuentaId } = req.params;
+      const { nuevaFecha } = req.body;
+
+      if (!nuevaFecha) {
+        return res.status(400).json({
+          status: 'error',
+          message: '⛔ La nueva fecha de inicio es requerida.'
+        });
+      }
+
+      // Llamamos al servicio que creamos anteriormente
+      const resultado = await inscripcionService.actualizarFechaInicioPorPago(cuentaId, nuevaFecha);
+
+      res.status(200).json({
+        status: 'success',
+        message: '📅 Fecha de inicio actualizada correctamente para todas las inscripciones del paquete.',
+        data: resultado
+      });
+
+    } catch (error) {
+      console.error('💥 Error en actualizarFechaInicio:', error);
+      res.status(error.statusCode || 500).json({
+        status: 'error',
+        message: error.message || 'Error interno al actualizar la fecha'
+      });
+    }
+  },
+
+  
 
 };

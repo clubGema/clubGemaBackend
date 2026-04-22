@@ -113,15 +113,15 @@ const obtenerEstadisticasAlumno = catchAsync(async (req, res) => {
 });
 
 const previsualizarClasesFuturas = catchAsync(async (req, res) => {
-  const { dia_semana } = req.body;
-
-  const fechas = await asistenciaService.previsualizarfechasFuturas(dia_semana);
+  // ✅ AHORA: Le pasamos TODO el req.body al service. 
+  // El frontend envía { alumno_id, horario_ids }, y el service lo recibe completito.
+  const fechas = await asistenciaService.previsualizarfechasFuturas(req.body);
 
   return apiResponse.success(res, {
     data: fechas,
-    message: 'fechas para previsualizar obtenidas.',
-  })
-})
+    message: 'Fechas inteligentes de previsualización obtenidas.',
+  });
+});
 
 
 export const asistenciaController = {

@@ -48,4 +48,16 @@ router.get(
     recuperacionController.obtenerHistorial
 );
 
+router.delete(
+    '/:id', 
+    authorize('Administrador'), 
+    recuperacionController.eliminarRecuperacion
+);
+
+router.get(
+    '/depuracion', 
+    authorize('Administrador'), 
+    recuperacionController.listarParaDepuracion
+);
+
 export default router;

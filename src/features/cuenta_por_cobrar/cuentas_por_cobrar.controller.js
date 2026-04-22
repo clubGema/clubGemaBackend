@@ -57,5 +57,36 @@ export const CuentasPorCobrarController = {
     } catch (error) {
       res.status(400).json({ ok: false, error: error.message });
     }
-  }
+  },
+
+ async previsualizarFechaRenovacion(req, res) {
+    try {
+      const { grupoUuid } = req.params;
+      const fechaSugerida = await CuentasPorCobrarService.obtenerFechaSugeridaPaquete(grupoUuid);
+      res.json({ ok: true, fechaSugerida });
+    } catch (error) {
+      res.status(400).json({ ok: false, error: error.message });
+    }
+  },
+
+  // 🔥 ACTUALIZADO: Ahora recibe grupoUuid en lugar de inscripcionId
+  async generarAdelantado(req, res) {
+    try {
+      const { grupoUuid } = req.params; // Cambiamos esto
+      const { fecha_inicio } = req.body;
+      
+      if (!fecha_inicio) throw new Error("La fecha de inicio es obligatoria");
+
+      const result = await CuentasPorCobrarService.generarRenovacionPaquete(grupoUuid, fecha_inicio);
+      
+      res.json({ 
+        ok: true, 
+        message: "Paquete renovado exitosamente.",
+        data: result 
+      });
+    } catch (error) {
+      res.status(400).json({ ok: false, error: error.message });
+    }
+  },
+  
 };

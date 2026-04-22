@@ -72,276 +72,138 @@ export const pagosService = {
   },
 
   // 2. VALIDAR EL PAGO (Tu lógica + Corrección de Monto + Sincronización de Fechas 🛡️)
-  validarPago: async (data) => {
-    const { pago_id, accion, usuario_admin_id, notas, monto_real_confirmado } = data;
-    const esAprobado = accion === 'APROBAR';
+validarPago: async (data) => {
+  const { pago_id, accion, usuario_admin_id, notas, monto_real_confirmado } = data;
+  const esAprobado = accion === 'APROBAR';
 
-    if (!['APROBAR', 'RECHAZAR'].includes(accion)) {
-      throw new Error('La acción debe ser APROBAR o RECHAZAR.');
+  if (!['APROBAR', 'RECHAZAR'].includes(accion)) {
+    throw new Error('La acción debe ser APROBAR o RECHAZAR.');
+  }
+
+  return await prisma.$transaction(async (tx) => {
+    // 🛡️ PASO 1: Buscar y Validar el pago
+    let pago = await Validators.buscarYValidarPagoPendiente(tx, pago_id);
+
+    // 👮‍♂️ PASO 2: Corrección de Monto por el Admin
+    if (esAprobado && monto_real_confirmado) {
+      const montoAdmin = Number.parseFloat(monto_real_confirmado);
+      if (montoAdmin !== Number(pago.monto_pagado)) {
+        pago = await tx.pagos.update({
+          where: { id: pago.id },
+          data: {
+            monto_pagado: montoAdmin,
+            notas_validacion: `Monto corregido por Admin. (Reportado: ${pago.monto_pagado})`,
+          },
+          include: { cuentas_por_cobrar: true },
+        });
+      }
     }
 
-    return await prisma.$transaction(async (tx) => {
-      // 🛡️ PASO 1: Buscar y Validar el pago
-      let pago = await Validators.buscarYValidarPagoPendiente(tx, pago_id);
+    // 💰 PASO 3: Lógica de Alcancía
+    let saldoRestante = 0;
+    let esPagoCompleto = false;
+    if (esAprobado) {
+      const saldos = await Logic.calcularSaldosAlcancía(tx, pago);
+      saldoRestante = saldos.saldoRestante;
+      esPagoCompleto = saldos.esPagoCompleto;
+    }
 
-      // 👮‍♂️ PASO 2: Corrección de Monto por el Admin
-      if (esAprobado && monto_real_confirmado) {
-        const montoAdmin = Number.parseFloat(monto_real_confirmado);
-        if (montoAdmin !== Number(pago.monto_pagado)) {
-          pago = await tx.pagos.update({
-            where: { id: pago.id },
-            data: {
-              monto_pagado: montoAdmin,
-              notas_validacion: `Monto corregido por Admin. (Reportado: ${pago.monto_pagado})`,
-            },
-            include: { cuentas_por_cobrar: true },
-          });
-        }
-      }
+    // 🔄 PASO 4: Determinar Evolución de Estados
+    const { nuevoEstadoDeuda, activarAlumno } = await Logic.definirEvolucionDeEstados(
+      tx,
+      pago,
+      esAprobado,
+      esPagoCompleto
+    );
 
-      // 💰 PASO 3: Lógica de Alcancía
-      let saldoRestante = 0;
-      let esPagoCompleto = false;
+    // 📝 PASO 5: Actualizar el Pago y la Deuda
+    const notaFinalInformativa = esAprobado
+      ? esPagoCompleto ? 'PAGO TOTAL' : `ABONO PARCIAL. Resta: S/ ${saldoRestante.toFixed(2)}`
+      : 'Rechazado';
 
-      if (esAprobado) {
-        const saldos = await Logic.calcularSaldosAlcancía(tx, pago);
-        saldoRestante = saldos.saldoRestante;
-        esPagoCompleto = saldos.esPagoCompleto;
-      }
-
-      // 🔄 PASO 4: Determinar Evolución de Estados
-      const { nuevoEstadoDeuda, activarAlumno } = await Logic.definirEvolucionDeEstados(
-        tx,
-        pago,
-        esAprobado,
-        esPagoCompleto
-      );
-
-      // 📝 PASO 5: Actualizar el Pago y la Deuda
-      const notaFinalInformativa = esAprobado
-        ? esPagoCompleto
-          ? 'PAGO TOTAL'
-          : `ABONO PARCIAL. Resta: S/ ${saldoRestante.toFixed(2)}`
-        : 'Rechazado';
-
-      const notasFinales = `${notas || ''} ${pago.notas_validacion || ''} | ${notaFinalInformativa}`;
-
-      const pagoActualizado = await tx.pagos.update({
-        where: { id: pago.id },
-        data: {
-          estado_validacion: esAprobado ? 'APROBADO' : 'RECHAZADO',
-          revisado_por: Number.parseInt(usuario_admin_id),
-          notas_validacion: notasFinales,
-          fecha_pago: new Date(),
-        },
-      });
-
-      await tx.cuentas_por_cobrar.update({
-        where: { id: pago.cuenta_id },
-        data: { estado: nuevoEstadoDeuda },
-      });
-
-      // 🎓 PASO 6: Gestión de Inscripciones y Asistencias
-      if (activarAlumno) {
-
-        // 1️⃣ COLOCA LA FUNCIÓN AQUÍ (O al inicio del archivo)
-        const normalizarFechaLima = (fecha) => {
-          const d = new Date(fecha);
-          if (!isNaN(d.getTime())) {
-            // Al poner las 12:00 PM, no importa si Railway le suma o resta 5 horas,
-            // SIEMPRE seguirá siendo el mismo día calendario.
-            d.setHours(12, 0, 0, 0);
-          }
-          return d;
-        };
-
-        const esRenovacion =
-          pago.cuentas_por_cobrar.detalle_adicional?.includes('Renovación Automática');
-
-        if (esRenovacion) {
-          // ==========================================
-          // CAMINO A: RENOVACIÓN UNIFICADA (Fecha Madre + 1)
-          // ==========================================
-          const inscripcionesActivas = await tx.inscripciones.findMany({
-            where: {
-              alumno_id: pago.cuentas_por_cobrar.alumno_id,
-              estado: { in: ['ACTIVO', 'VENCIDO'] },
-            },
-            include: { horarios_clases: true },
-          });
-
-          if (inscripcionesActivas.length > 0) {
-            // 🌟 Encontrar la Fecha Madre (la más antigua)
-
-            const fechas = inscripcionesActivas.map((i) => {
-              const d = new Date(i.fecha_inscripcion);
-              d.setHours(12, 0, 0, 0); // Forzamos mediodía
-              return d.getTime();
-            });
-
-            const fechaMadre = new Date(Math.min(...fechas));
-
-            // 🕰️ Calcular fin del ciclo actual (Día 30)
-            const finCicloActual = new Date(fechaMadre);
-            finCicloActual.setDate(finCicloActual.getDate() + 30);
-
-
-            const hoy = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Lima" }));
-            hoy.setHours(12, 0, 0, 0); // Estandariza a mediodía
-
-
-            let fechaInicioNuevoCiclo;
-
-            if (hoy < finCicloActual) {
-              // CASO 1: Pago temprano. Nuevo ciclo arranca el día SIGUIENTE al vencimiento (Día 31 real)
-              fechaInicioNuevoCiclo = new Date(finCicloActual);
-              fechaInicioNuevoCiclo.setDate(fechaInicioNuevoCiclo.getDate() + 1);
-            } else {
-              // CASO 2: Pago en prórroga. Nuevo ciclo arranca HOY.
-              fechaInicioNuevoCiclo = hoy;
-            }
-
-            // =================================================================
-            // 🔥 INICIO DE CÓDIGO NUEVO AÑADIDO: OVERRIDE DE RECUPERACIONES 🔥
-            // =================================================================
-            const ultimaRecuperacion = await tx.recuperaciones.findFirst({
-              where: {
-                alumno_id: pago.cuentas_por_cobrar.alumno_id,
-                fecha_programada: { not: null }
-              },
-              orderBy: { fecha_programada: 'desc' }
-            });
-
-            if (ultimaRecuperacion && ultimaRecuperacion.fecha_programada) {
-              const fechaPostRecuperacion = new Date(ultimaRecuperacion.fecha_programada);
-              fechaPostRecuperacion.setDate(fechaPostRecuperacion.getDate() + 1); // El día siguiente a su recuperación
-
-              // Si el día después de su última recuperación es MAYOR a la fecha calculada, gana la recuperación
-              if (fechaPostRecuperacion > fechaInicioNuevoCiclo) {
-                fechaInicioNuevoCiclo = fechaPostRecuperacion;
-                console.log(`🚀 [OVERRIDE] Fecha ajustada por recuperación. Nuevo inicio: ${fechaInicioNuevoCiclo.toLocaleDateString()}`);
-              }
-            }
-            // =================================================================
-            // 🔥 FIN DE CÓDIGO NUEVO AÑADIDO 🔥
-            // =================================================================
-
-            for (const inscripcion of inscripcionesActivas) {
-              await tx.inscripciones.update({
-                where: { id: inscripcion.id },
-                data: {
-                  fecha_inscripcion: fechaInicioNuevoCiclo,
-                  fecha_inscripcion_original: fechaInicioNuevoCiclo,
-                  estado: 'ACTIVO',
-                  actualizado_en: hoy,
-                },
-              });
-
-              await asistenciaService.generarClasesFuturas(tx, {
-                inscripcion_id: inscripcion.id,
-                dia_semana: inscripcion.horarios_clases.dia_semana,
-                usuario_admin_id: Number.parseInt(usuario_admin_id),
-                coordinador_id: inscripcion.horarios_clases.coordinador_id,
-                fecha_inicio: fechaInicioNuevoCiclo,
-              });
-            }
-          }
-        } else {
-          // ==========================================
-          // CAMINO B: ALUMNOS NUEVOS O UPGRADES
-          // ==========================================
-          const inscripciones = await tx.inscripciones.findMany({
-            where: {
-              alumno_id: pago.cuentas_por_cobrar.alumno_id,
-              estado: { in: ['POR_VALIDAR', 'PENDIENTE_PAGO'] },
-            },
-            include: { horarios_clases: true },
-          });
-
-          for (const inscripcion of inscripciones) {
-
-            //CAMBIO CAMBIO CAMBIO
-            const fechaInicioReal = inscripcion.fecha_inscripcion;
-
-            await tx.inscripciones.update({
-              where: { id: inscripcion.id },
-              data: { estado: 'ACTIVO', actualizado_en: new Date() },
-            });
-
-            await asistenciaService.generarClasesFuturas(tx, {
-              inscripcion_id: inscripcion.id,
-              dia_semana: inscripcion.horarios_clases.dia_semana,
-              usuario_admin_id: Number.parseInt(usuario_admin_id),
-              coordinador_id: inscripcion.horarios_clases.coordinador_id,
-              fecha_inicio: fechaInicioReal,   // const fechaInicioReal //CAMBIO CAMBIO CAMBIO
-            });
-          }
-        }
-      } else if (!esAprobado) {
-        const deuda = await tx.cuentas_por_cobrar.findFirst({
-          where: {
-            alumno_id: pago.cuentas_por_cobrar.alumno_id,
-            estado: 'PENDIENTE',
-          },
-          orderBy: {
-            creado_en: 'desc',
-          },
-          include: { descuentos_aplicados: true },
-        });
-
-        if (deuda) {
-          if (deuda.descuentos_aplicados.length > 0) {
-            for (const desc of deuda.descuentos_aplicados) {
-              await tx.beneficios_pendientes.updateMany({
-                where: {
-                  alumno_id: pago.cuentas_por_cobrar.alumno_id,
-                  tipo_beneficio_id: desc.tipo_beneficio_id,
-                  usado: true,
-                },
-                data: { usado: false },
-              });
-            }
-          }
-          await tx.descuentos_aplicados.deleteMany({
-            where: { cuenta_id: deuda.id },
-          });
-
-          const inscDeleted = await tx.inscripciones.deleteMany({
-            where: {
-              alumno_id: pago.cuentas_por_cobrar.alumno_id,
-              estado: 'POR_VALIDAR',
-            }
-          });
-
-          if (inscDeleted.count > 0) {
-            await tx.cuentas_por_cobrar.update({
-              where: { id: deuda.id },
-              data: { estado: 'RECHAZADO', }
-            });
-          }
-        }
-      }
-
-      // =================================================================
-      // 🔔 PASO 7: NOTIFICACIÓN AUTOMÁTICA AL ALUMNO
-      // =================================================================
-      await notificacionesService.crear({
-        alumnoId: pago.cuentas_por_cobrar.alumno_id,
-        titulo: esAprobado ? '✅ Pago Aprobado' : '❌ Pago Rechazado',
-        mensaje: esAprobado
-          ? `Tu pago de S/ ${pagoActualizado.monto_pagado.toFixed(2)} ha sido validado. ${esPagoCompleto ? '¡Tu ciclo está activo!' : 'Se registró como abono parcial.'}`
-          : `Tu reporte de pago por S/ ${pagoActualizado.monto_pagado.toFixed(2)} fue rechazado. Revisa las observaciones en tu perfil.`,
-        tipo: esAprobado ? 'SUCCESS' : 'DANGER',
-        categoria: 'PAGOS',
-      });
-
-      return {
-        resultado: Utils.generarMensajeResultado(accion, esPagoCompleto, saldoRestante),
-        pago: pagoActualizado,
-        saldo_pendiente: saldoRestante,
-      };
+    const pagoActualizado = await tx.pagos.update({
+      where: { id: pago.id },
+      data: {
+        estado_validacion: esAprobado ? 'APROBADO' : 'RECHAZADO',
+        revisado_por: Number.parseInt(usuario_admin_id),
+        notas_validacion: `${notas || ''} | ${notaFinalInformativa}`,
+        fecha_pago: new Date(),
+      },
     });
-  },
+
+    await tx.cuentas_por_cobrar.update({
+      where: { id: pago.cuenta_id },
+      data: { estado: nuevoEstadoDeuda },
+    });
+
+    // 🎓 PASO 6: GESTIÓN DE INSCRIPCIONES
+    // 🚩 CAMBIO CLAVE: Quitamos la condición "&& esPagoCompleto"
+    // Si 'activarAlumno' es true, significa que este pago (sea parcial o total) 
+    // habilita al alumno para tener clases.
+    if (activarAlumno) {
+      
+      const links = await tx.inscripciones_deudas_link.findMany({
+        where: { cuenta_id: pago.cuenta_id },
+        include: { 
+          inscripciones: { 
+            include: { horarios_clases: true } 
+          } 
+        }
+      });
+
+      for (const link of links) {
+        const insc = link.inscripciones;
+
+        // 🛡️ SEGURO: Solo activar y generar clases si la inscripción está 'POR_VALIDAR'
+        // Esto evita que si el alumno hace un SEGUNDO abono parcial, se le vuelvan a generar clases.
+        if (insc.estado === 'POR_VALIDAR') {
+            await tx.inscripciones.update({
+              where: { id: insc.id },
+              data: { 
+                estado: 'ACTIVO', 
+                actualizado_en: new Date() 
+              },
+            });
+
+            // GENERACIÓN DE ASISTENCIAS
+            await asistenciaService.generarClasesFuturas(tx, {
+              inscripcion_id: insc.id,
+              dia_semana: insc.horarios_clases.dia_semana,
+              usuario_admin_id: Number.parseInt(usuario_admin_id),
+              coordinator_id: insc.horarios_clases.coordinador_id,
+              fecha_inicio: insc.fecha_inscripcion, 
+            });
+        }
+      }
+    } else if (!esAprobado) {
+      // ❌ Lógica de rechazo
+      const links = await tx.inscripciones_deudas_link.findMany({
+        where: { cuenta_id: pago.cuenta_id }
+      });
+      const idsInsc = links.map(l => l.inscripcion_id);
+      await tx.inscripciones.deleteMany({
+        where: { id: { in: idsInsc }, estado: 'POR_VALIDAR' }
+      });
+    }
+
+    // 🔔 PASO 7: NOTIFICACIÓN (Se mantiene igual)
+    await notificacionesService.crear({
+      alumnoId: pago.cuentas_por_cobrar.alumno_id,
+      titulo: esAprobado ? '✅ Pago Validado' : '❌ Pago Rechazado',
+      mensaje: esAprobado 
+        ? `Tu pago de S/ ${pagoActualizado.monto_pagado} fue aprobado. ${!esPagoCompleto ? 'Recuerda que tienes un saldo pendiente.' : ''}` 
+        : `Tu pago fue rechazado. Revisa tus observaciones.`,
+      tipo: esAprobado ? 'SUCCESS' : 'DANGER',
+      categoria: 'PAGOS',
+    });
+
+    return {
+      resultado: Utils.generarMensajeResultado(accion, esPagoCompleto, saldoRestante),
+      pago: pagoActualizado,
+      saldo_pendiente: saldoRestante,
+    };
+  });
+},
   obtenerTodos: async () => {
     return await prisma.pagos.findMany({
       include: {
@@ -496,4 +358,42 @@ export const pagosService = {
       where: { id: Number.parseInt(id) },
     });
   },
+  // En tu archivo de servicios de pagos (Backend)
+obtenerDetalleCompleto: async (pagoId) => {
+  const pago = await prisma.pagos.findUnique({
+    where: { id: Number.parseInt(pagoId) },
+    include: {
+      metodos_pago: true,
+      cuentas_por_cobrar: {
+        include: {
+          // 🔥 ESTA ES LA LÍNEA QUE FALTABA:
+          // Sin esto, el frontend no puede sumar los abonos anteriores
+          pagos: true, 
+
+          alumnos: {
+            include: { usuarios: true }
+          },
+          inscripciones_deudas_link: {
+            include: {
+              inscripciones: {
+                include: {
+                  horarios_clases: {
+                    include: {
+                      canchas: { include: { sedes: true } },
+                      niveles_entrenamiento: true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  });
+
+  if (!pago) throw new Error('El registro de pago no existe.');
+  
+  return pago;
+},
 };

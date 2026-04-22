@@ -27,11 +27,17 @@ router.patch(
   inscripcionController.cancelarReserva
 );
 
+// inscripcion.routes.js
+router.delete('/paquete/:cuentaId', inscripcionController.cancelarPaquetePorDeuda);
+
 router.get('/alumno-no-finalizadas/:alumnoId', inscripcionController.listarNoFinalizadasPorAlumno);
 
 router.put(
   '/horario-inscripcion',
   inscripcionController.updateInscripcion
 )
+// PATCH /api/inscripciones/:id/separar-finalizar
+router.patch('/:id/separar-finalizar', inscripcionController.separarYFinalizar);
 
+router.patch('/paquete/fecha/:cuentaId', inscripcionController.actualizarFechaInicio);
 export default router;

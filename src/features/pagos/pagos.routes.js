@@ -42,5 +42,8 @@ router.get('/:id', pagosController.obtenerPago);
 
 // DELETE: Borrar un registro (Cuidado: afecta auditoría)
 router.delete('/:id', pagosController.eliminarPago);
+// --- NUEVO ENDPOINT PARA EL MODAL (Búsqueda Profunda) ---
+// Ponlo arriba para que no choque con el de /:id genérico
+router.get('/detalle-maestro/:id', pagosController.obtenerDetalle);
 
 export default router;

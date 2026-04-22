@@ -377,6 +377,78 @@ export const usuarioService = {
     });
   },
 
+  // getUsersByRol: async (rolOrId, sedeId) => {
+  //   const isNumber = !Number.isNaN(Number(rolOrId));
+
+  //   let whereClause = {
+  //     activo: true,
+  //     roles: isNumber
+  //       ? { id: Number.parseInt(rolOrId) }
+  //       : { nombre: { equals: rolOrId, mode: 'insensitive' } },
+  //   };
+
+  //   if (sedeId) {
+  //     whereClause.alumnos = {
+  //       inscripciones: {
+  //         some: {
+  //           horarios_clases: {
+  //             canchas: {
+  //               sede_id: Number.parseInt(sedeId),
+  //             },
+  //           },
+  //         },
+  //       },
+  //     };
+  //   }
+
+  //   const usuarios = await prisma.usuarios.findMany({
+  //     where: whereClause,
+  //     include: {
+  //       roles: true,
+  //       // Solo trae los datos del rol, no vuelvas a incluir 'usuarios' dentro de ellos
+  //       alumnos: {
+  //         select: {
+  //           condiciones_medicas: true,
+  //           seguro_medico: true,
+  //           grupo_sanguineo: true,
+  //           alumnos_contactos: {
+  //             select: {
+  //               relacion: true,
+  //               telefono: true,
+  //             }
+  //           },
+  //           inscripciones: {
+  //             select: {
+  //               horarios_clases: {
+  //                 select: {
+  //                   canchas: {
+  //                     select: {
+  //                       sedes: {
+  //                         select: {
+  //                           id: true,
+  //                           nombre: true,
+  //                         }
+  //                       }
+  //                     }
+  //                   }
+  //                 }
+  //               }
+  //             }
+  //           }
+  //         }
+  //       },
+  //       coordinadores: {
+  //         select: {
+  //           especializacion: true,
+  //         },
+  //       },
+  //     },
+  //     orderBy: { nombres: 'asc' },
+  //   });
+
+  //   return usuarios;
+  // },
+
   getUsersByRol: async (rolOrId, sedeId) => {
     const isNumber = !Number.isNaN(Number(rolOrId));
 
@@ -392,43 +464,62 @@ export const usuarioService = {
         inscripciones: {
           some: {
             horarios_clases: {
-              canchas: {
-                sede_id: Number.parseInt(sedeId),
-              },
+              canchas: { sede_id: Number.parseInt(sedeId) },
             },
           },
         },
       };
     }
 
-    const usuarios = await prisma.usuarios.findMany({
+    return await prisma.usuarios.findMany({
       where: whereClause,
-      include: {
-        roles: true,
-        // Solo trae los datos del rol, no vuelvas a incluir 'usuarios' dentro de ellos
+      select: {
+        id: true,
+        nombres: true,
+        apellidos: true,
+        numero_documento: true,
+        telefono_personal: true,
+        fecha_nacimiento: true,
+        email: true,
+        genero: true,
         alumnos: {
           select: {
+            // 🔥 CAMPOS DE SALUD (Sacados de tu imagen b09aa9)
             condiciones_medicas: true,
             seguro_medico: true,
             grupo_sanguineo: true,
-            alumnos_contactos: {
+            historial: true,
+            direcciones: {
               select: {
-                relacion: true,
-                telefono: true,
+                direccion_completa: true,
+                distrito: true,
+                ciudad: true,
+                referencia: true
               }
             },
-            inscripciones: {
+
+            // 📞 CONTACTOS DE EMERGENCIA (Sacados de tu imagen 504af4)
+            alumnos_contactos: {
+              where: { es_principal: true },
               select: {
+                nombre_completo: true,
+                telefono: true,
+                relacion: true
+              }
+            },
+
+            // 🎾 INSCRIPCIONES PARA SEDE, NIVEL Y CORTE
+            inscripciones: {
+              where: { estado: 'ACTIVO' },
+              select: {
+                fecha_inscripcion: true,
                 horarios_clases: {
                   select: {
+                    niveles_entrenamiento: { select: { nombre: true } },
                     canchas: {
                       select: {
-                        sedes: {
-                          select: {
-                            id: true,
-                            nombre: true,
-                          }
-                        }
+                        nombre: true,
+                        sedes: { select: { nombre: true } }
                       }
                     }
                   }
@@ -436,17 +527,10 @@ export const usuarioService = {
               }
             }
           }
-        },
-        coordinadores: {
-          select: {
-            especializacion: true,
-          },
-        },
+        }
       },
       orderBy: { nombres: 'asc' },
     });
-
-    return usuarios;
   },
   getUserByDni: async (dni) => {
     return await prisma.usuarios.findFirst({

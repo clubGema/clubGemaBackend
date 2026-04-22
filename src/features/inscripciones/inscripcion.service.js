@@ -14,212 +14,164 @@ dayjs.extend(utc);
 dayjs.extend(timezone);
 const TZ_LIMA = 'America/Lima';
 
-export const inscripcionService = {
+export const inscripcionService = { 
   // =================================================================
   // 🚀 MOTOR MAESTRO DE INSCRIPCIÓN: GEMA ACADEMY (VERSIÓN FINAL)
   // =================================================================
   inscribirPaquete: async (data) => {
-    const { alumno_id, horario_ids, fecha_inicio_electiva, incluye_camiseta } = data; // CAMBIO CAMBIO
+  const { alumno_id, horario_ids, fecha_inicio_electiva, incluye_camiseta } = data;
 
-    try {
-      // 1. Validación de estructura de entrada
-      Utils.validarInputInscripcion(horario_ids);
+  try {
+    // 1. Validación de estructura de entrada (Utils sigue sirviendo)
+    Utils.validarInputInscripcion(horario_ids);
 
-      return await prisma.$transaction(async (tx) => {
-        // 🛡️ PASO 0: MUROS DE SEGURIDAD (Deuda y Recuperaciones)
-        await Validators.validarMuroDeDeuda(tx, alumno_id);
-        await Validators.validarSinRecuperacionesPendientes(tx, alumno_id);
+    return await prisma.$transaction(async (tx) => {
+      // 🛡️ PASO 0: MUROS DE SEGURIDAD (Regla de Oro: Muro de Deuda)
+      await Validators.validarMuroDeDeuda(tx, alumno_id);
+      await Validators.validarSinRecuperacionesPendientes(tx, alumno_id);
 
-        // 🕵️‍♂️ PASO 1: DETECTIVE DE RÉGIMEN Y CICLO
-        const esAlumnoLegacy = await Logic.detectarRegimenAlumno(tx, alumno_id);
-        const cicloInfo = await Logic.calcularCicloUpgrade(tx, alumno_id);
+      // 🕵️‍♂️ PASO 1: DETECTIVE DE RÉGIMEN (Solo para saber si es Legacy o 2026)
+      // Borramos Logic.calcularCicloUpgrade porque ya no hay sincronización.
+      const esAlumnoLegacy = await Logic.detectarRegimenAlumno(tx, alumno_id);
 
-        // 🔥 MAGIA DE SINCRONIZACIÓN: Extraemos ambas fechas del nuevo objeto
-        const fechaCorte = cicloInfo ? cicloInfo.fechaCorte : null;
-        const fechaMadre = cicloInfo ? cicloInfo.fechaMadre : null;
-        const esInscripcionAdicional = !!fechaCorte;
-
-        // 👮‍♂️ PASO 2: VALIDACIÓN DE CAPACIDAD TOTAL (Combo Máximo Dinámico)
-        const clasesAnteriores = await tx.inscripciones.count({
-          where: { alumno_id: parseInt(alumno_id), estado: 'ACTIVO' }
-        });
-        const cantidadPeticion = horario_ids.length;
-        const cantidadTotalFinal = clasesAnteriores + cantidadPeticion;
-
-        // Buscamos el plan en el catálogo según el total acumulado
-        const conceptoAplicar = await tx.catalogo_conceptos.findFirst({
-          where: {
-            cantidad_clases_semanal: esInscripcionAdicional ? cantidadTotalFinal : cantidadPeticion,
-            activo: true,
-            es_vigente: !esAlumnoLegacy
-          }
-        });
-
-        // 🔥 FILTRO DE LÍMITE: Si no existe el plan, informamos el tope actual del catálogo
-        if (!conceptoAplicar) {
-          const planMaximo = await tx.catalogo_conceptos.findFirst({
-            where: { activo: true, es_vigente: !esAlumnoLegacy },
-            orderBy: { cantidad_clases_semanal: 'desc' }
-          });
-          const limiteMax = planMaximo ? planMaximo.cantidad_clases_semanal : 0;
-
-          const mensajeError = esInscripcionAdicional
-            ? `⛔ LÍMITE SUPERADO: Ya tienes ${clasesAnteriores} clases activas. No puedes sumar ${cantidadPeticion} más porque el límite máximo de Gema es de ${limiteMax} clases por alumno.`
-            : `⛔ BLOQUEO DE PLAN: No puedes inscribirte a ${cantidadPeticion} clases. El plan más grande que ofrecemos es de ${limiteMax} clases.`;
-
-          throw new Error(mensajeError);
+      // 👮‍♂️ PASO 2: VALIDACIÓN DE CAPACIDAD Y BUSQUEDA DE PLAN
+      // Buscamos el plan según la cantidad de horarios que el alumno está comprando HOY.
+      const conceptoAplicar = await tx.catalogo_conceptos.findFirst({
+        where: {
+          cantidad_clases_semanal: horario_ids.length,
+          activo: true,
+          es_vigente: !esAlumnoLegacy
         }
-
-        // 🔥 PASO 2.5: BLOQUEO DE CIERRE DE CICLO (Anti-Limbo)
-        if (esInscripcionAdicional) {
-          const paramAnti = await tx.parametros_sistema.findUnique({ where: { clave: 'DIAS_ANTICIPACION_RENOVACION' } });
-          const diasAnticipacion = paramAnti ? Number.parseInt(paramAnti.valor) : 5;
-          const hoy = new Date();
-          const diasRestantes = (fechaCorte.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24);
-
-          if (diasRestantes <= diasAnticipacion) {
-            throw new Error(`⛔ BLOQUEO DE CICLO: Estás a menos de ${Math.ceil(diasRestantes)} días de terminar tu mes. Espera al inicio de tu nuevo ciclo.`);
-          }
-        }
-
-        // 🧟 PASO 3: CONFIGURACIÓN ANTI-ZOMBIE (Aforo)
-        const paramZ = await tx.parametros_sistema.findUnique({ where: { clave: 'TIEMPO_LIMITE_RESERVA_MIN' } });
-        const fechaLimiteZombie = new Date(Date.now() - (paramZ ? parseInt(paramZ.valor) : 20) * 60 * 1000);
-
-        // 🧮 PASO 4: PREPARACIÓN DE PRECIO UNITARIO (Para Upgrades)
-        let precioUnitarioOficial = 0;
-        if (esInscripcionAdicional) {
-          const codigoUnitario = esAlumnoLegacy ? 'CLASE_UNI_LEGACY' : 'CLASE_UNITARIA_2026';
-          const conceptoUnitario = await tx.catalogo_conceptos.findFirst({
-            where: { codigo_interno: codigoUnitario, activo: true }
-          });
-          precioUnitarioOficial = Number(conceptoUnitario?.precio_base || 0);
-        }
-
-        // 🔄 PASO 5: PROCESAR HORARIOS Y COBRO (Lógica Bipolar: Nuevo vs Upgrade)
-        const inscripcionesCreadas = [];
-        let totalCobrar = 0;
-        let detalleCobro = [];
-
-        // 🔥 AQUI DECLARAMOS LA VARIABLE PARA QUE NO FALLE
-        const hoyInscripcion = new Date();
-
-
-        //CAMBIO CAMBIO CAMBIO
-        // ✅ La forma correcta (usando la variable que ya extrajiste):
-        const inicioElectivo = fecha_inicio_electiva ? new Date(fecha_inicio_electiva) : new Date();
-
-        for (const idHorario of horario_ids) {
-          const horario = await Validators.validarAforoHorario(tx, idHorario, fechaLimiteZombie);
-          let montoEsteHorario = 0;
-
-          if (esInscripcionAdicional && fechaCorte) {
-            // Caso Upgrade: Clases restantes hasta el corte * Precio Unitario
-            const clasesRestantes = Utils.contarClasesEnIntervalo(horario.dia_semana, hoyInscripcion, fechaCorte);
-            montoEsteHorario = clasesRestantes * precioUnitarioOficial;
-            detalleCobro.push(`Upgrade ${horario.dia_semana} (${clasesRestantes} cl)`);
-          } else {
-            // Caso Nuevo: Precio del plan dividido entre horarios elegidos
-            montoEsteHorario = Number(conceptoAplicar.precio_base) / cantidadPeticion;
-            detalleCobro.push(`Mensualidad ${horario.dia_semana}`);
-          }
-
-          totalCobrar += montoEsteHorario;
-
-          const nuevaInscripcion = await tx.inscripciones.create({
-            data: {
-              alumno_id: parseInt(alumno_id),
-              horario_id: idHorario,
-              estado: 'PENDIENTE_PAGO',
-              // 🔥 MAGIA DE SINCRONIZACIÓN Y CREACIÓN
-              fecha_inscripcion: (esInscripcionAdicional && fechaMadre) ? fechaMadre : inicioElectivo,
-              fecha_inscripcion_original: (esInscripcionAdicional && fechaMadre) ? fechaMadre : inicioElectivo, //CAMBIO CAMBIO CAMBIO cambiar hoyInscripcion por inicio efectivo
-            },
-            include: { horarios_clases: true }
-          });
-          inscripcionesCreadas.push(nuevaInscripcion);
-        }
-
-        //  CAMBIO CAMBIO CAMBIO 
-        if (incluye_camiseta) {
-          totalCobrar += 50;
-          detalleCobro.push("Camiseta Oficial Gema (S/ 50.00)");
-        }
-
-        // 💸 PASO 6: GENERAR DEUDA Y APLICAR BENEFICIOS
-        if (totalCobrar > 0) {
-          const nuevaCuenta = await tx.cuentas_por_cobrar.create({
-            data: {
-              alumno_id: parseInt(alumno_id),
-              concepto_id: conceptoAplicar.id,
-              detalle_adicional: [...new Set(detalleCobro)].join(' | '),
-              monto_final: totalCobrar,
-              fecha_vencimiento: esInscripcionAdicional ? fechaCorte : new Date(Date.now() + 2 * 24 * 60 * 60 * 1000),
-              estado: 'PENDIENTE'
-            }
-          });
-
-          // Aplicación de Beneficios (Legacy & 2026)
-          const beneficiosEnCola = await tx.beneficios_pendientes.findMany({
-            where: { alumno_id: parseInt(alumno_id), usado: false },
-            include: { tipos_beneficio: true }
-          });
-
-          let montoActualizado = totalCobrar;
-          for (const pendiente of beneficiosEnCola) {
-            const valorNominal = parseFloat(pendiente.tipos_beneficio.valor_por_defecto);
-            let descuentoReal = pendiente.tipos_beneficio.es_porcentaje
-              ? montoActualizado * (valorNominal / 100)
-              : valorNominal;
-            const descuentoFinal = descuentoReal > montoActualizado ? montoActualizado : descuentoReal;
-            montoActualizado -= descuentoFinal;
-
-            await tx.descuentos_aplicados.create({
-              data: {
-                cuenta_id: nuevaCuenta.id,
-                tipo_beneficio_id: pendiente.tipo_beneficio_id,
-                monto_nominal_aplicado: valorNominal,
-                monto_dinero_descontado: descuentoFinal,
-                motivo_detalle: pendiente.motivo || "Beneficio automático",
-                aplicado_por: pendiente.asignado_por,
-                fecha_aplicacion: new Date()
-              }
-            });
-            await tx.beneficios_pendientes.update({ where: { id: pendiente.id }, data: { usado: true } });
-          }
-
-          await tx.cuentas_por_cobrar.update({
-            where: { id: nuevaCuenta.id },
-            data: { monto_final: montoActualizado, estado: montoActualizado <= 0.01 ? 'PAGADA' : 'PENDIENTE' }
-          });
-
-
-        }
-
-
-        // 🔔 PASO 7: NOTIFICACIÓN PARA EL DASHBOARD
-        await tx.notificaciones.create({
-          data: {
-            alumno_id: parseInt(alumno_id),
-            titulo: esInscripcionAdicional ? '🚀 Upgrade de Horario' : '✅ Inscripción Exitosa',
-            mensaje: `Se ha generado tu reserva. Total a pagar: S/ ${totalCobrar.toFixed(2)}.`,
-            tipo: 'SUCCESS',
-            categoria: 'SISTEMA'
-          }
-        });
-
-        return {
-          mensaje: esInscripcionAdicional ? 'Upgrade procesado correctamente.' : 'Inscripción exitosa.',
-          total_a_pagar: totalCobrar,
-          inscripciones: inscripcionesCreadas
-        };
       });
 
-    } catch (error) {
-      console.error(`❌ [FALLO MOTOR] Alumno: ${alumno_id} | ${error.message}`);
-      throw error;
-    }
-  },
+      if (!conceptoAplicar) {
+        throw new Error(`⛔ No existe un plan para ${horario_ids.length} clases en el catálogo.`);
+      }
+
+      // 🧟 PASO 3: ANTI-ZOMBIE (Aforo)
+      const paramZ = await tx.parametros_sistema.findUnique({ where: { clave: 'TIEMPO_LIMITE_RESERVA_MIN' } });
+      const fechaLimiteZombie = new Date(Date.now() - (paramZ ? parseInt(paramZ.valor) : 20) * 60 * 1000);
+
+      // 🔄 PASO 4: PROCESAR HORARIOS (Independencia Radical)
+      const inscripcionesCreadas = [];
+      const grupoUuid = crypto.randomUUID(); // ID único para este paquete de compra
+      
+      // La fecha de inicio es la electiva o hoy. Cada slot tendrá esta misma fecha de inicio.
+      const inicioReal = fecha_inicio_electiva ? dayjs(fecha_inicio_electiva).tz(TZ_LIMA).hour(12).toDate() : dayjs().tz(TZ_LIMA).hour(12).toDate();
+
+      for (const idHorario of horario_ids) {
+        // Validar aforo por cada clase
+        await Validators.validarAforoHorario(tx, idHorario, fechaLimiteZombie);
+
+        // Crear la inscripción con sus propios 30 días limpios
+        const nuevaInscripcion = await tx.inscripciones.create({
+          data: {
+            alumno_id: parseInt(alumno_id),
+            horario_id: idHorario,
+            id_grupo_transaccion: grupoUuid,
+            estado: 'PENDIENTE_PAGO',
+            fecha_inscripcion: inicioReal,
+            fecha_inscripcion_original: inicioReal,
+          },
+          include: { horarios_clases: true }
+        });
+        inscripcionesCreadas.push(nuevaInscripcion);
+      }
+
+      // 💸 PASO 5: CÁLCULO DE COBRO (Simple y Directo)
+      let totalCobrar = Number(conceptoAplicar.precio_base);
+      let detalleCobro = [`Plan ${horario_ids.length} clases/semana`];
+
+      if (incluye_camiseta) {
+        totalCobrar += 50;
+        detalleCobro.push("Camiseta Oficial Gema");
+      }
+
+      // Generar la Cuenta por Cobrar única para esta transacción
+      const nuevaCuenta = await tx.cuentas_por_cobrar.create({
+        data: {
+          alumno_id: parseInt(alumno_id),
+          concepto_id: conceptoAplicar.id,
+          monto_final: totalCobrar,
+          detalle_adicional: detalleCobro.join(' | '),
+          fecha_vencimiento: dayjs().tz(TZ_LIMA).add(2, 'day').endOf('day').toDate(), // 48 horas de reserva
+          estado: 'PENDIENTE'
+        }
+      });
+
+      // 🌉 PASO 6: VINCULACIÓN A LA TABLA PUENTE (La Alcancía)
+      // Dividimos el monto (por ahora parejo) entre los slots inscritos
+      const montoPorSlot = totalCobrar / inscripcionesCreadas.length;
+
+      await tx.inscripciones_deudas_link.createMany({
+        data: inscripcionesCreadas.map((ins) => ({
+          inscripcion_id: ins.id,
+          cuenta_id: nuevaCuenta.id,
+          monto_asignado: montoPorSlot
+        }))
+      });
+
+      // 💸 PASO 7: APLICACIÓN DE BENEFICIOS (Automáticos)
+      const beneficiosEnCola = await tx.beneficios_pendientes.findMany({
+        where: { alumno_id: parseInt(alumno_id), usado: false },
+        include: { tipos_beneficio: true }
+      });
+
+      let montoActualizado = totalCobrar;
+      for (const pendiente of beneficiosEnCola) {
+        const valorNominal = parseFloat(pendiente.tipos_beneficio.valor_por_defecto);
+        let descuentoReal = pendiente.tipos_beneficio.es_porcentaje 
+          ? montoActualizado * (valorNominal / 100) 
+          : valorNominal;
+        
+        const descuentoFinal = descuentoReal > montoActualizado ? montoActualizado : descuentoReal;
+        montoActualizado -= descuentoFinal;
+
+        await tx.descuentos_aplicados.create({
+          data: {
+            cuenta_id: nuevaCuenta.id,
+            tipo_beneficio_id: pendiente.tipo_beneficio_id,
+            monto_nominal_aplicado: valorNominal,
+            monto_dinero_descontado: descuentoFinal,
+            motivo_detalle: pendiente.motivo || "Beneficio automático",
+            aplicado_por: pendiente.asignado_por
+          }
+        });
+        await tx.beneficios_pendientes.update({ where: { id: pendiente.id }, data: { usado: true } });
+      }
+
+      // Actualizamos el monto final de la cuenta tras los beneficios
+      await tx.cuentas_por_cobrar.update({
+        where: { id: nuevaCuenta.id },
+        data: { 
+          monto_final: montoActualizado,
+          estado: montoActualizado <= 0.01 ? 'PAGADA' : 'PENDIENTE'
+        }
+      });
+
+      // 🔔 PASO 8: NOTIFICACIÓN
+      await tx.notificaciones.create({
+        data: {
+          alumno_id: parseInt(alumno_id),
+          titulo: '✅ Inscripción Generada',
+          mensaje: `Se ha reservado tu cupo. Total: S/ ${montoActualizado.toFixed(2)}.`,
+          tipo: 'SUCCESS',
+          categoria: 'SISTEMA'
+        }
+      });
+
+      return {
+        mensaje: 'Inscripción procesada exitosamente.',
+        total_a_pagar: montoActualizado,
+        inscripciones: inscripcionesCreadas
+      };
+    });
+
+  } catch (error) {
+    console.error(`❌ [FALLO MOTOR RADICAL] Alumno: ${alumno_id} | ${error.message}`);
+    throw error;
+  }
+},
 
   // =================================================================
   // 🔮 LA LÓGICA DEL PROFETA: Renovaciones Masivas (Reconstruido)
@@ -358,29 +310,52 @@ export const inscripcionService = {
     });
   },
   obtenerPorAlumno: async (alumnoId) => {
-    return await prisma.inscripciones.findMany({
-      where: {
-        alumno_id: Number.parseInt(alumnoId)
-      },
-      include: {
-        horarios_clases: {
-          include: {
-            canchas: {
-              include: {
-                sedes: {
-                  select: {
-                    nombre: true,
-                  }
+  return await prisma.inscripciones.findMany({
+    where: {
+      alumno_id: Number.parseInt(alumnoId)
+    },
+    include: {
+      // 1. Entramos a la tabla de Horarios
+      horarios_clases: {
+        include: {
+          // 2. Entramos a la tabla de Canchas
+          canchas: {
+            include: {
+              // 3. Entramos a la tabla de Sedes para el nombre (Lima, Callao, etc.)
+              sedes: {
+                select: {
+                  nombre: true
                 }
               }
-            },
-            niveles_entrenamiento: true,
-            coordinadores: { include: { usuarios: true } }
+            }
+          },
+          // 4. Traemos el nivel (Básico, Intermedio, etc.)
+          niveles_entrenamiento: {
+            select: {
+              nombre: true
+            }
           }
         }
+      },
+      // 5. Traemos la deuda para las fechas de vigencia (Ciclo)
+      inscripciones_deudas_link: {
+        include: {
+          cuentas_por_cobrar: {
+            select: {
+              id: true,
+              fecha_vencimiento: true,
+              estado: true,
+              detalle_adicional: true
+            }
+          }
+        },
+        orderBy: { creado_en: 'desc' },
+        take: 1
       }
-    });
-  },
+    },
+    orderBy: { creado_en: 'desc' }
+  });
+},
   obtenerNoFinalizadasPorAlumno: async (alumnoId) => {
     return await prisma.inscripciones.findMany({
       where: {
@@ -491,6 +466,50 @@ export const inscripcionService = {
       };
     });
   },
+  // Nuevo método específico para tu flujo
+separarFinalizarVoluntaria: async (id) => {
+  return await prisma.$transaction(async (tx) => {
+    const inscripcionId = Number(id);
+
+    // 1. Verificamos existencia
+    const inscripcion = await tx.inscripciones.findUnique({
+      where: { id: inscripcionId }
+    });
+
+    if (!inscripcion) throw new Error('Inscripción no encontrada');
+
+    // 2. Lógica de recuperaciones para el estado
+    const tieneRecuperaciones = await tx.recuperaciones.findFirst({
+      where: {
+        alumno_id: inscripcion.alumno_id,
+        estado: { in: ['PENDIENTE', 'PROGRAMADA'] }
+      }
+    });
+
+    const nuevoEstado = tieneRecuperaciones ? 'PEN-RECU' : 'FINALIZADO';
+
+    console.log(`🚀 [BACKEND] Desvinculando ID ${inscripcionId} del grupo ${inscripcion.id_grupo_transaccion}`);
+
+    // 3. ACTUALIZACIÓN FORZADA
+    const actualizada = await tx.inscripciones.update({
+      where: { id: inscripcionId },
+      data: {
+        estado: nuevoEstado,
+        // IMPORTANTE: Asegúrate de que en tu schema.prisma este campo permita null
+        id_grupo_transaccion: null, 
+        actualizado_en: new Date()
+      }
+    });
+
+    console.log(`✅ [DB SUCCESS] Ahora id_grupo_transaccion es: ${actualizada.id_grupo_transaccion}`);
+
+    return {
+      success: true,
+      mensaje: 'Horario removido del paquete y finalizado correctamente.',
+      nuevoEstado: actualizada.estado
+    };
+  });
+},
 
   cancelarReservaPendiente: async (id) => {
     return await prisma.$transaction(async (tx) => {
@@ -557,6 +576,55 @@ export const inscripcionService = {
       return { success: true, mensaje: 'Paquete de reserva cancelado íntegramente.' };
     });
   },
+
+  // inscripcion.service.js
+eliminarPaqueteCompleto: async (cuentaId) => {
+  return await prisma.$transaction(async (tx) => {
+    // 1. Buscamos la cuenta para leer el detalle ANTES de borrarla
+    const cuenta = await tx.cuentas_por_cobrar.findUnique({
+      where: { id: parseInt(cuentaId) }
+    });
+
+    const links = await tx.inscripciones_deudas_link.findMany({
+      where: { cuenta_id: parseInt(cuentaId) }
+    });
+
+    const idsInscripciones = links.map(l => l.inscripcion_id);
+
+    // 2. 🔄 REVERSIÓN BASADA EN EL DETALLE DE LA CUENTA
+    if (cuenta?.detalle_adicional?.includes('FECHA_ANT:')) {
+      // Extraemos la fecha usando un split rápido
+      const parteFecha = cuenta.detalle_adicional.split('FECHA_ANT:')[1].split('|')[0];
+      
+      for (const idIns of idsInscripciones) {
+        await tx.inscripciones.update({
+          where: { id: idIns },
+          data: { 
+            fecha_inscripcion: new Date(parteFecha),
+            actualizado_en: new Date()
+          }
+        });
+      }
+      console.log(`[REVERSIÓN] Ciclos restaurados a: ${parteFecha}`);
+    }
+
+    // 3. LIMPIEZA TOTAL
+    await tx.inscripciones_deudas_link.deleteMany({ where: { cuenta_id: parseInt(cuentaId) } });
+    await tx.descuentos_aplicados.deleteMany({ where: { cuenta_id: parseInt(cuentaId) } });
+    await tx.pagos.deleteMany({ where: { cuenta_id: parseInt(cuentaId) } });
+    await tx.cuentas_por_cobrar.delete({ where: { id: parseInt(cuentaId) } });
+
+    // 4. Borramos solo si eran nuevas (PENDIENTE_PAGO o POR_VALIDAR)
+    const result = await tx.inscripciones.deleteMany({
+      where: { 
+        id: { in: idsInscripciones },
+        estado: { in: ['PENDIENTE_PAGO', 'POR_VALIDAR'] }
+      }
+    });
+
+    return { success: true, borrados: result.count };
+  });
+},
 
   updateInscripcion: async (data) => {
     const { alumnoId, inscripcionId, horarioId, adminId } = data;
@@ -625,6 +693,46 @@ export const inscripcionService = {
       });
 
       return updateInsc
+    });
+  },
+  // ... al final de inscripcionService
+
+  // =================================================================
+  // 📅 ACTUALIZAR FECHA DE INICIO (Desde Validación de Pago)
+  // =================================================================
+  actualizarFechaInicioPorPago: async (cuentaId, nuevaFecha) => {
+    return await prisma.$transaction(async (tx) => {
+      // 1. Buscamos las inscripciones vinculadas a través de la tabla puente
+      const links = await tx.inscripciones_deudas_link.findMany({
+        where: { cuenta_id: Number.parseInt(cuentaId) }
+      });
+
+      if (links.length === 0) {
+        throw new ApiError('No se encontraron inscripciones vinculadas a esta cuenta.', 404);
+      }
+
+      const idsInscripciones = links.map(l => l.inscripcion_id);
+      const fechaFormateada = dayjs.tz(nuevaFecha, TZ_LIMA).startOf('day').toDate();
+
+      // 2. Actualizamos las inscripciones
+      // Nota: Actualizamos tanto fecha_inscripcion como fecha_inscripcion_original 
+      // para que el historial sea consistente.
+      await tx.inscripciones.updateMany({
+        where: { id: { in: idsInscripciones } },
+        data: {
+          fecha_inscripcion: fechaFormateada,
+          fecha_inscripcion_original: fechaFormateada,
+          actualizado_en: new Date()
+        }
+      });
+
+      console.log(`📅 [ADMIN] Se actualizó la fecha de inicio a ${nuevaFecha} para ${idsInscripciones.length} inscripciones.`);
+
+      return { 
+        success: true, 
+        count: idsInscripciones.length,
+        nueva_fecha: fechaFormateada 
+      };
     });
   }
 

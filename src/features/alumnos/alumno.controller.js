@@ -25,4 +25,23 @@ listarAlumnosResumen: catchAsync(async (req, res) => {
       data: data,
     });
   }),
+listarAlumnosResumenPorCoordinador: catchAsync(async (req, res) => {
+    // Extraemos el ID y el Rol del token de sesión
+    const { id: usuarioId, role } = req.user; 
+    
+    let data;
+
+    if (role === 'Administrador') {
+        // Si es Admin, llama al service global (sin filtro de ID)
+        data = await alumnoService.listarAlumnosResumen();
+    } else {
+        // Si es Coordinador, pasamos su ID para filtrar sus alumnos
+        data = await alumnoService.listarAlumnosResumenPorCoordinador(usuarioId);
+    }
+
+    return apiResponse.success(res, {
+        message: 'Resumen de cortes para gestión de alumnos cargado con éxito',
+        data: data,
+    });
+}),
 };
