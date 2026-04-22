@@ -342,8 +342,7 @@ const obtenerPendientes = async (alumnoId) => {
  * Valida TODAS las reglas de negocio antes de permitir una recuperación.
  */
 const validarElegibilidad = async (alumnoId, recuperacionId, fechaProgramada, horarioDestinoId) => {
-  const soloFechaString = fechaProgramada.split('T')[0];
-  const fechaProgramadaDate = new Date(`${soloFechaString}T00:00:00.000Z`);
+  const fechaProgramadaDate = new Date(fechaProgramada);
 
   const faltaPendiente = await prisma.recuperaciones.findFirst({
     where: {
@@ -380,10 +379,11 @@ const validarElegibilidad = async (alumnoId, recuperacionId, fechaProgramada, ho
   }
 
   const hoyUTC = new Date();
-  hoyUTC.setUTCHours(0, 0, 0, 0);
   if (fechaProgramadaDate < hoyUTC) {
     throw new ApiError('La fecha programada no puede ser anterior a hoy.', 400);
   }
+
+  fechaProgramadaDate.setHours(fechaProgramadaDate.getHours() - 5);
 
   const inicioInscripcion = new Date(inscripciones[0].fecha_inscripcion_original);
   inicioInscripcion.setHours(0, 0, 0, 0);
@@ -490,7 +490,10 @@ const agendarRecuperacion = async ({ alumnoId, recuperacionId, horarioDestinoId,
   // 1. Re-validar reglas de negocio (Doble check de seguridad)
   await validarElegibilidad(alumnoId, recuperacionId, fechaProgramada, horarioDestinoId);
 
-  const soloFechaString = fechaProgramada.split('T')[0];
+  const soloFechaString = new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'America/Lima'
+  }).format(new Date(fechaProgramada));
+
   const fechaFinalUTC = new Date(`${soloFechaString}T00:00:00.000Z`);
 
   // 2. VALIDACIÓN DE AFORO
