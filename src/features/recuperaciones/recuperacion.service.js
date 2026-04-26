@@ -2,6 +2,7 @@ import { prisma } from '../../config/database.config.js';
 import { ApiError } from '../../shared/utils/error.util.js';
 
 // Crear registro de recuperacion pendiente en caso sea marcado como FALTA.
+// faltaPendiente = Ticket de Recuperación
 const registrarFaltaPendiente = async (tx, alumnoId, fechaFalta, asistenciaId) => {
 
   const cantidadInscripciones = await tx.inscripciones.count({
@@ -25,7 +26,7 @@ const registrarFaltaPendiente = async (tx, alumnoId, fechaFalta, asistenciaId) =
 
   // Si aún no realiza el pago total, no se genera una recuperación.
   if (parcial) {
-    console.log('El alumno aún no realiza el pago total.');
+    console.log(`ID Alumno ${alumnoId}: El alumno aún no realiza el pago total.`);
     return null;
   }
 
@@ -53,7 +54,8 @@ const registrarFaltaPendiente = async (tx, alumnoId, fechaFalta, asistenciaId) =
   });
 
   if (!inscripcion) {
-    throw new ApiError('No se encontró una inscripción activa para este alumno.', 404);
+    console.log(`ID Alumno ${alumnoId}: No se encontró una inscripción activa para este alumno.`);
+    return null;
   }
 
   const inicioInscripcion = new Date(inscripcion.fecha_inscripcion_original);
@@ -64,24 +66,16 @@ const registrarFaltaPendiente = async (tx, alumnoId, fechaFalta, asistenciaId) =
   const diasTranscurridosFalta = Math.floor(diffFalta / (1000 * 60 * 60 * 24));
 
   if (diasTranscurridosFalta < 0) {
-    throw new ApiError('La fecha de la falta es anterior a la fecha de inscripción.', 400);
+    console.log(`ID Alumno ${alumnoId}: La fecha de la falta es anterior a la fecha de inscripción, no se generó ticket de recuperación.`);
+    return null;
   }
 
-  const numeroBloqueFalta = Math.floor(diasTranscurridosFalta / 30);
-
-  const inicioCicloFalta = new Date(inicioInscripcion);
-  inicioCicloFalta.setUTCDate(inicioInscripcion.getUTCDate() + numeroBloqueFalta * 30);
-
-  const finCicloFalta = new Date(inicioInscripcion);
-  finCicloFalta.setUTCDate(inicioInscripcion.getUTCDate() + (numeroBloqueFalta + 1) * 30);
-
-  const ticketsEnCiclo = await tx.recuperaciones.count({
+  const tickets = await tx.recuperaciones.count({
     where: {
       alumno_id: Number.parseInt(alumnoId),
       es_por_lesion: false, // No contamos los tickets VIP
       fecha_falta: {
-        gte: inicioCicloFalta,
-        lt: finCicloFalta,
+        gte: inicioInscripcion,
       }
     },
   });
@@ -90,7 +84,7 @@ const registrarFaltaPendiente = async (tx, alumnoId, fechaFalta, asistenciaId) =
   const limitePermitido = cantidadInscripciones >= 4 ? 4 : 2;
 
   // Si ya llegó al tope, abortamos la creación del ticket
-  if (ticketsEnCiclo >= limitePermitido) {
+  if (tickets >= limitePermitido) {
     console.log(`El alumno ${alumnoId} alcanzó su límite de ${limitePermitido} faltas normales para su ciclo actual.`);
     return null;
   }
@@ -249,13 +243,46 @@ const obtenerPendientes = async (alumnoId) => {
   const inicioInscripcion = new Date(inscripciones[0].fecha_inscripcion_original);
   inicioInscripcion.setHours(0, 0, 0, 0);
 
-  const finCicloRegular = new Date(inicioInscripcion);
-  finCicloRegular.setUTCDate(inicioInscripcion.getUTCDate() + 29);
+  // Traer fecha local y convertirla a string
+  const fechaLocalTexto = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
+  // Crear un date con ese string forzando la hora en UTC (Z = UTC  /  -05:00 = GMT-5)
+  const hoy = new Date(`${fechaLocalTexto}T00:00:00Z`);
 
-  // // Buscamos los dias de los horarios que coincidan con el alumno
-  // const diasRegulares = inscripciones
-  //   .map(i => i.horarios_clases?.dia_semana)
-  //   .filter(Boolean); // Array con los días en int
+  const clasesRegulares = await prisma.registros_asistencia.findMany({
+    where: {
+      inscripciones: {
+        alumno_id: alumnoId,
+      },
+      fecha: {
+        gte: hoy,
+      }
+    },
+    select: {
+      fecha: true,
+      inscripciones: {
+        select: {
+          horarios_clases: {
+            select: { hora_inicio: true, id: true }
+          },
+        }
+      }
+    }
+  })
+
+  const fechasClasesRegulares = [];
+  for (const clase of clasesRegulares) {
+    const fecha = clase.fecha;
+    const hora = clase.inscripciones.horarios_clases.hora_inicio;
+
+    const fechaStr = fecha.toISOString().split('T')[0];
+
+    const horas = hora.getUTCHours().toString().padStart(2, '0');
+    const minutos = hora.getUTCMinutes().toString().padStart(2, '0');
+
+    const resultado = `${fechaStr}T${horas}:${minutos}`;
+
+    fechasClasesRegulares.push({ fecha_clase: resultado, id_horario: clase.inscripciones.horarios_clases.id });
+  }
 
   // Buscamos horarios que coincidan con el alumno
   const horariosRegularesIDs = inscripciones.map(i => i.horario_id).filter(Boolean);
@@ -288,11 +315,6 @@ const obtenerPendientes = async (alumnoId) => {
     },
   });
 
-  // // Si no hay inscripción activa, devolvemos los tickets tal cual. COMENTADO: (POR SEGURIDAD, MEJOR DEVOLVER UN ARRAY VACIO)
-  // if (!inscripcion) {
-  //   return pendientes.map(p => ({ ...p, fecha_caducidad: null }));
-  // }
-
   // Inyectamos en cada ticket sin lesión la fecha límite
   const pendientesConFechaLimite = pendientes.map((ticket) => {
 
@@ -303,23 +325,8 @@ const obtenerPendientes = async (alumnoId) => {
       };
     }
 
-    const fechaFaltaDate = new Date(ticket.fecha_falta);
-
-    const diffFalta = fechaFaltaDate - inicioInscripcion;
-    const diasTranscurridosFalta = Math.floor(diffFalta / (1000 * 60 * 60 * 24));
-
-    // Protección por si la fecha de falta es anterior a la inscripción (Para casos aislados de migración)
-    if (diasTranscurridosFalta < 0) {
-      return { ...ticket, fecha_caducidad: null };
-    }
-
-    const numeroBloqueFalta = Math.floor(diasTranscurridosFalta / 30);
-
-    const finCicloFalta = new Date(inicioInscripcion);
-    finCicloFalta.setUTCDate(inicioInscripcion.getUTCDate() + (numeroBloqueFalta + 1) * 30);
-
-    const fechaLimiteValida = new Date(finCicloFalta);
-    fechaLimiteValida.setUTCDate(finCicloFalta.getUTCDate() + 29);
+    const fechaLimiteValida = new Date(ticket.fecha_falta);
+    fechaLimiteValida.setUTCDate(fechaLimiteValida.getUTCDate() + 30);
 
     return {
       ...ticket,
@@ -333,7 +340,7 @@ const obtenerPendientes = async (alumnoId) => {
       recuperacion_usadas: recuperacionesUsadas,
       limite_permitido: limitePermitido,
       horarios_regulares: horariosRegularesIDs,
-      fin_ciclo_regular: finCicloRegular,
+      fechas_clases_regulares: fechasClasesRegulares,
     }
   };
 };
@@ -354,12 +361,10 @@ const validarElegibilidad = async (alumnoId, recuperacionId, fechaProgramada, ho
 
   if (!faltaPendiente) {
     throw new ApiError(
-      'No se encontró una falta pendiente para esta fecha. Puede que ya haya sido recuperada o no se haya registrado la inasistencia aún.',
+      `Ticket de recuperación ${recuperacionId} no encontrado o no disponible.`,
       404
     );
   }
-
-  const fechaFaltaDate = new Date(faltaPendiente.fecha_falta);
 
   const inscripciones = await prisma.inscripciones.findMany({
     where: {
@@ -374,40 +379,61 @@ const validarElegibilidad = async (alumnoId, recuperacionId, fechaProgramada, ho
     },
   });
 
-  if (inscripciones.length === 0) {
-    throw new ApiError('No tienes una inscripción activa.', 403);
-  }
-
   const hoyUTC = new Date();
   if (fechaProgramadaDate < hoyUTC) {
     throw new ApiError('La fecha programada no puede ser anterior a hoy.', 400);
   }
 
-  fechaProgramadaDate.setHours(fechaProgramadaDate.getHours() - 5);
+  // Traer fecha local y convertirla a string
+  const fechaLocalTexto = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
+  // Crear un date con ese string forzando la hora en UTC (Z = UTC  /  -05:00 = GMT-5)
+  const hoy = new Date(`${fechaLocalTexto}T00:00:00Z`);
 
-  const inicioInscripcion = new Date(inscripciones[0].fecha_inscripcion_original);
-  inicioInscripcion.setHours(0, 0, 0, 0);
-
-  const finCicloRegular = new Date(inicioInscripcion);
-  finCicloRegular.setUTCDate(inicioInscripcion.getUTCDate() + 30);
-
-  // Si la recuperación se quiere agendar dentro del ciclo de clases, validamos que no cruce con su horario regular.
-  if (fechaProgramadaDate < finCicloRegular) {
-    // // Validacion para que no agende recuperación el mismo día de su clase regular
-    // const indiceDiaAgendado = (fechaProgramadaDate.getUTCDay() === 0) ? 7 : fechaProgramadaDate.getUTCDay(); // 1:Lunes ... 7:Domingo
-
-    // Verificamos que su dia de recuperación no interfiera con el horario regular del alumno.
-    const cruceHorarios = inscripciones.some(
-      (inscripcion) => inscripcion.horario_id === Number.parseInt(horarioDestinoId)
-    );
-
-    if (cruceHorarios) {
-      throw new ApiError(
-        `No se puede agendar este día, corresponde a tu horario regular. Selecciona otro turno disponible.`,
-        400
-      );
+  const clasesRegulares = await prisma.registros_asistencia.findMany({
+    where: {
+      inscripciones: {
+        alumno_id: alumnoId,
+      },
+    },
+    select: {
+      fecha: true,
+      inscripciones: {
+        select: {
+          horarios_clases: {
+            select: { hora_inicio: true, id: true }
+          },
+        }
+      }
     }
+  })
+
+  const fechasClasesRegulares = [];
+  for (const clase of clasesRegulares) {
+    const fecha = clase.fecha;
+    const hora = clase.inscripciones.horarios_clases.hora_inicio;
+
+    const fechaCompleta = new Date(
+      fecha.getUTCFullYear(),
+      fecha.getUTCMonth(),
+      fecha.getUTCDate(),
+      hora.getUTCHours(),
+      hora.getUTCMinutes(),
+      0
+    )
+
+    fechasClasesRegulares.push({ fecha_clase: fechaCompleta, id_horario: clase.inscripciones.horarios_clases.id });
   }
+
+  // Verificamos que su dia de recuperación no interfiera con el horario regular del alumno.
+  const cruceHorarios = fechasClasesRegulares.some(f => f.fecha_clase.getTime() === fechaProgramadaDate.getTime() && f.id_horario === horarioDestinoId);
+
+  if (cruceHorarios) {
+    throw new ApiError(
+      `No se puede agendar este día, corresponde a tu horario regular. Selecciona otro turno disponible.`,
+      400
+    );
+  }
+  //}
 
   // Por lesión omite las validaciones de las faltas normales.
   if (faltaPendiente.es_por_lesion) {
@@ -424,47 +450,30 @@ const validarElegibilidad = async (alumnoId, recuperacionId, fechaProgramada, ho
   }
 
   // ---------------------------------------------------------
-  // 2. CÁLCULO DEL CICLO DE LA FALTA
+  // 2. VALIDACIÓN DE VIGENCIA (30 días despues de la falta)
   // ---------------------------------------------------------
 
-  // Calculamos a qué ciclo pertenece la falta
-  const diffFalta = fechaFaltaDate - inicioInscripcion;
-  const diasTranscurridosFalta = Math.floor(diffFalta / (1000 * 60 * 60 * 24));
+  const fechaLimiteValida = new Date(faltaPendiente.fecha_falta);
+  fechaLimiteValida.setUTCDate(fechaLimiteValida.getUTCDate() + 30);
 
-  if (diasTranscurridosFalta < 0) {
-    throw new ApiError('La fecha de la falta es anterior a tu inscripción.', 400);
-  }
+  // Traer fecha local y convertirla a string
+  const fechaProgramadaTexto = fechaProgramadaDate.toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
+  // Crear un date con ese string forzando la hora en UTC (Z = UTC  /  -05:00 = GMT-5)
+  const fechaProgramadaLocal = new Date(`${fechaProgramadaTexto}T00:00:00Z`);
 
-  const numeroBloqueFalta = Math.floor(diasTranscurridosFalta / 30);
-
-  // Inicio y Fin del ciclo donde ocurrió la falta
-  const inicioCicloFalta = new Date(inicioInscripcion);
-  inicioCicloFalta.setUTCDate(inicioInscripcion.getUTCDate() + numeroBloqueFalta * 30);
-
-  const finCicloFalta = new Date(inicioInscripcion);
-  finCicloFalta.setUTCDate(inicioInscripcion.getUTCDate() + (numeroBloqueFalta + 1) * 30);
-
-  // ---------------------------------------------------------
-  // 3. VALIDACIÓN DE VIGENCIA (Fin del ciclo de falta + 30 días)
-  // ---------------------------------------------------------
-
-  const fechaLimiteValida = new Date(finCicloFalta);
-  fechaLimiteValida.setUTCDate(finCicloFalta.getUTCDate() + 30);
-
-  if (fechaProgramadaDate >= fechaLimiteValida) {
+  if (fechaProgramadaLocal > fechaLimiteValida) {
     throw new ApiError('La vigencia para recuperar esta falta ha expirado o sobrepasa la fecha límite.', 400);
   }
 
   // ---------------------------------------------------------
-  // 4. VALIDACIÓN DE TOPE DE CUPOS
+  // 3. VALIDACIÓN DE TOPE DE CUPOS
   // ---------------------------------------------------------
-  const recuperacionesEnCiclo = await prisma.recuperaciones.count({
+  const recuperacionesRealizadas = await prisma.recuperaciones.count({
     where: {
       alumno_id: Number.parseInt(alumnoId),
       es_por_lesion: false,
       fecha_falta: {
-        gte: inicioCicloFalta,
-        lt: finCicloFalta,
+        gte: inscripciones[0].fecha_inscripcion_original,
       },
       estado: { in: ['PROGRAMADA', 'COMPLETADA_FALTA', 'COMPLETADA_PRESENTE'] },
     },
@@ -476,7 +485,7 @@ const validarElegibilidad = async (alumnoId, recuperacionId, fechaProgramada, ho
     limitePermitido = 4;
   }
 
-  if (recuperacionesEnCiclo >= limitePermitido) {
+  if (recuperacionesRealizadas >= limitePermitido) {
     throw new ApiError(`Has alcanzado tu límite de ${limitePermitido} recuperaciones.`, 400);
   }
 
@@ -560,7 +569,6 @@ const obtenerTodas = async () => {
     orderBy: { fecha_falta: 'desc' }
   });
 };
-// Añadir a recuperacion.service.js
 
 const eliminarRecuperacionAdmin = async (recuperacionId) => {
   const ticket = await prisma.recuperaciones.findUnique({
@@ -578,39 +586,37 @@ const eliminarRecuperacionAdmin = async (recuperacionId) => {
   });
 };
 
-// recuperacion.service.js
-
 const obtenerRecuperacionesParaDepuracion = async () => {
   try {
     const data = await prisma.recuperaciones.findMany({
       include: {
         // 1. Datos del Alumno y su Usuario (Para saber a quién borrar)
         alumnos: {
-          include: { 
-            usuarios: { 
-              select: { 
-                nombres: true, 
-                apellidos: true 
-              } 
-            } 
+          include: {
+            usuarios: {
+              select: {
+                nombres: true,
+                apellidos: true
+              }
+            }
           }
         },
         // 2. Sede de DESTINO (Solo traerá datos si el ticket ya fue agendado)
         horarios_clases: {
-          include: { 
-            canchas: { 
-              include: { 
-                sedes: true 
-              } 
-            }, 
-            niveles_entrenamiento: true 
+          include: {
+            canchas: {
+              include: {
+                sedes: true
+              }
+            },
+            niveles_entrenamiento: true
           }
         }
         // 🛑 Se eliminó registros_asistencia para evitar el Error 500
         // debido a la falta de relación definida en el schema.prisma
       },
-      orderBy: { 
-        fecha_falta: 'desc' 
+      orderBy: {
+        fecha_falta: 'desc'
       }
     });
     return data;

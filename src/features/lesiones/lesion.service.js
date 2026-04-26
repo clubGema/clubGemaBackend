@@ -131,34 +131,26 @@ const evaluarSolicitud = async ({
     // Definir el rango de fechas a afectar
     const inicioRango = new Date(fechaInicio);
     inicioRango.setHours(0, 0, 0, 0);
-    let fechaFinBusquedaGlobal = new Date(inicioRango);
+    let finRango
+    if (tipo === 'RANGO') {
+      if (!fechaFin) throw new ApiError('Fecha fin requerida para RANGO.', 400);
+      finRango = new Date(fechaFin);
+      finRango.setHours(0, 0, 0, 0);
+
+      if (inicioRango > finRango) throw new ApiError('La fecha final debe ser mayor a la fecha inicial.', 400);
+    }
 
     // A. Crear registros en CONGELAMIENTOS (Uno por cada inscripción activa)
     for (const inscripcion of inscripcionesActivas) {
-      let finRangoLocal;
-
-      if (tipo === 'RANGO') {
-        if (!fechaFin) throw new ApiError('Fecha fin requerida para RANGO.', 400);
-        finRangoLocal = new Date(fechaFin);
-      } else {
-        finRangoLocal = new Date(inscripcion.fecha_inscripcion_original);
-        finRangoLocal.setDate(finRangoLocal.getDate() + 30);
-      }
-      finRangoLocal.setHours(0, 0, 0, 0);
-
-      // Actualizamos la fecha global de búsqueda para asegurarnos de cubrir el rango más lejano
-      if (finRangoLocal > fechaFinBusquedaGlobal) {
-        fechaFinBusquedaGlobal = finRangoLocal;
-      }
 
       await tx.congelamientos.create({
         data: {
           inscripcion_id: inscripcion.id,
           solicitud_lesion_id: solicitud.id,
           fecha_inicio: inicioRango,
-          fecha_fin: tipo === 'RANGO' ? finRangoLocal : null, // Dejarlo en null si es INDEFINIDO, ya que no afecta la lógica de momento.
+          fecha_fin: tipo === 'RANGO' ? finRango : null, // Dejarlo en null si es INDEFINIDO, ya que no afecta la lógica de momento.
           estado: 'ACTIVO',
-          dias_reconocidos: 0, // Se puede manejar para ver cuantos dias se estan cubriendo con el congelamiento, pero tampoco es que afecte la lógica.
+          //dias_reconocidos: 0, // Se puede manejar para ver cuantos dias se estan cubriendo con el congelamiento, pero tampoco es que afecte la lógica.
         },
       });
     }
@@ -166,14 +158,15 @@ const evaluarSolicitud = async ({
     // B. Buscar asistencias en ese rango para TODAS las inscripciones
     const idsInscripciones = inscripcionesActivas.map((i) => i.id);
 
+    const fechaFilter = tipo === 'RANGO'
+      ? { gte: inicioRango, lte: finRango }
+      : { gte: inicioRango };
+
     const clasesAfectadas = await tx.registros_asistencia.findMany({
       where: {
         // Usamos 'in' para buscar en cualquiera de sus inscripciones
         inscripcion_id: { in: idsInscripciones },
-        fecha: {
-          gte: inicioRango,
-          lte: fechaFinBusquedaGlobal,
-        },
+        fecha: fechaFilter,
         estado: { in: ['PROGRAMADA', 'FALTA'] },
       },
     });
