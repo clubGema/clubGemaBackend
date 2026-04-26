@@ -3,12 +3,12 @@ import { prisma } from '../../../config/database.config.js';
 export const reporteService = {
   /**
    * Recopila un mega-reporte tridimensional (alumnos, pagos y deudas) con relaciones de profundidad.
-   * @returns {Promise<{alumnos: Array, pagos: Array, deudas: Array}>} Datos aplanados para exportación matricial/Excel.
+   * Ahora incluye mapeo de morosidad.
    */
   async getDetailedExcelReport() {
     try {
       const [alumnos, pagos, deudas, inscripciones] = await Promise.all([
-        // 1. Alumnos
+        // 1. Alumnos (Con check de deudas pendientes)
         prisma.alumnos.findMany({
           select: {
             usuario_id: true,
@@ -31,6 +31,11 @@ export const reporteService = {
               where: { es_principal: true },
               select: { nombre_completo: true, telefono: true, relacion: true },
             },
+            // Traemos solo las deudas pendientes para saber si debe o no
+            cuentas_por_cobrar: {
+              where: { estado: 'PENDIENTE' },
+              select: { id: true }
+            }
           },
         }),
         // 2. Pagos
@@ -121,6 +126,8 @@ export const reporteService = {
         alumnos: alumnos.map((a) => ({
           ID: a.usuario_id,
           Estado: a.usuarios?.activo ? 'ACTIVO' : 'INACTIVO',
+          Deuda_Pendiente: a.cuentas_por_cobrar.length > 0 ? 'SÍ' : 'NO', // Nueva columna
+          Cant_Cuentas_Pendientes: a.cuentas_por_cobrar.length, // Opcional: cantidad de deudas
           Nombres: a.usuarios?.nombres || '',
           Apellidos: a.usuarios?.apellidos || '',
           DNI: a.usuarios?.numero_documento || 'N/A',
@@ -168,8 +175,6 @@ export const reporteService = {
         })),
       };
     } catch (error) {
-      // Defer Error throw a un nivel utilitario o al log (mantenido de la versión original)
-      // eslint-disable-next-line no-console
       console.error('Error detallado en Prisma:', error);
       throw error;
     }
