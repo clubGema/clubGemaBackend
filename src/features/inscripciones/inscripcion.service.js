@@ -1,5 +1,5 @@
 import { prisma } from '../../config/database.config.js';
-
+import crypto from 'crypto';
 import * as Utils from './utils/inscripcion.util.js';
 import * as Validators from './validators/inscripcion.validator.js';
 import * as Logic from './logic/inscripcion.logic.js';
