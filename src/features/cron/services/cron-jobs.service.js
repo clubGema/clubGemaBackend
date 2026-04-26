@@ -42,7 +42,7 @@ export const iniciarCronJobs = () => {
   // Objetivo: Cambiar a FINALIZADO o PEN-RECU según el ciclo (Madre + 30 días + tolerancia).
   // ------------------------------------------------------------------
   cron.schedule(
-    '* * * * *',
+    '0 1 * * *',
     async () => {
       logger.info(`[CRON] Iniciando revisión nocturna de ciclos: ${new Date().toISOString()}`);
       try {
