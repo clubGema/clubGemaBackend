@@ -71,17 +71,12 @@ async limpiarReservasZombies() {
 }
 
 async gestionarVencimientos() {
-  const hoyLima = dayjs().tz(TZ_LIMA).startOf('day');
+  // Aseguramos que "hoy" empiece a las 00:00 en la zona horaria de Perú
+  const hoyLima = dayjs().tz('America/Lima').startOf('day');
   logger.info(`[VERDUGO] Iniciando revisión de ciclos. Hoy: ${hoyLima.format('YYYY-MM-DD')}`);
 
   try {
-    const paramTolerancia = await prisma.parametros_sistema.findUnique({
-      where: { clave: 'DIAS_TOLERANCIA_VENCIMIENTO' },
-    });
-    
-    // Leemos los días de gracia (si es 24, el de marzo aún vive; si es 5, muere hoy)
-    const diasGracia = paramTolerancia ? Number.parseInt(paramTolerancia.valor) : 5;
-
+    // Ya no consultamos parametros_sistema. Vamos directo por las inscripciones activas.
     const inscripcionesActivas = await prisma.inscripciones.findMany({
       where: { estado: 'ACTIVO' }
     });
@@ -97,11 +92,14 @@ async gestionarVencimientos() {
 
         if (lesionActiva) continue;
 
-        const fechaInicio = dayjs(insc.fecha_inscripcion);
-        const fechaVencimientoSlot = fechaInicio.add(30 + diasGracia, 'day').startOf('day');
+        // Convertimos la fecha de inscripción a la zona horaria de Lima y la seteamos al inicio del día
+        const fechaInicio = dayjs(insc.fecha_inscripcion).tz('America/Lima').startOf('day');
+        
+        // Calculamos la diferencia exacta en días
+        const diasTranscurridos = hoyLima.diff(fechaInicio, 'day');
 
-        // 💀 Ejecución
-        if (hoyLima.isAfter(fechaVencimientoSlot)) {
+        // 💀 Ejecución: Si pasaron 30 días exactos o más (Ej: del 1 de mayo al 31 de mayo hay 30 días)
+        if (diasTranscurridos >= 30) {
           
           const tieneRecuperaciones = await prisma.recuperaciones.findFirst({
             where: {
@@ -117,13 +115,13 @@ async gestionarVencimientos() {
             where: { id: insc.id },
             data: { 
               estado: nuevoEstado, 
-              id_grupo_transaccion: null, // 👈 AGREGADO: Limpiamos el ID de grupo
+              id_grupo_transaccion: null, // Limpiamos el ID de grupo
               actualizado_en: new Date() 
             }
           });
 
           totalFinalizados++;
-          logger.info(`[VERDUGO] ✅ Slot ${insc.id} liquidado y desvinculado de grupo.`);
+          logger.info(`[VERDUGO] ✅ Slot ${insc.id} liquidado (Días transcurridos: ${diasTranscurridos}) y desvinculado de grupo.`);
         }
       } catch (innerError) {
         logger.error(`[VERDUGO ERROR] ID ${insc.id}: ${innerError.message}`);
