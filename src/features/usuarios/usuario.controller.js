@@ -70,9 +70,12 @@ export const usuarioController = {
 
   getDetailedReport: catchAsync(async (req, res) => {
     const reportData = await usuarioService.getDetailedExcelReport();
+
+    const finalData = Array.isArray(reportData) ? reportData : [];
+
     return apiResponse.success(res, {
-      message: 'Reporte generado',
-      data: reportData,
+      message: 'Reporte generado exitosamente',
+      data: finalData,
     });
   }),
 
@@ -83,7 +86,7 @@ export const usuarioController = {
     // Si no existe, devolvemos success pero con data en null
     return apiResponse.success(res, {
       message: usuario ? 'Usuario encontrado' : 'Usuario no existe',
-      data: usuario || null, 
+      data: usuario || null,
     });
   }),
 };

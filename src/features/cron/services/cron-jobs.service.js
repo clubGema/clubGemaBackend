@@ -87,7 +87,7 @@ export const iniciarCronJobs = () => {
 
   // ------------------------------------------------------------------
   // TAREA 4: LA LIMPIEZA DE TICKETS (Todos los días a las 01:00 AM)
-  // Objetivo: Expirar (VENCIDA) las recuperaciones que pasaron sus 30 días después del fin de inscripción.
+  // Objetivo: Expirar (VENCIDA) las recuperaciones que pasaron sus 30 días después de la fecha de falta.
   // ------------------------------------------------------------------
   cron.schedule(
     '0 1 * * *',
@@ -213,15 +213,15 @@ export const iniciarCronJobs = () => {
     { timezone: 'America/Lima' }
   );
 
-  // Cron para cambiar de estado a las recuperaciones por lesion que no fueron marcadas como PRESENTE / FALTA
+  // Cron para cambiar de estado a las recuperaciones programadas que no fueron marcadas como PRESENTE / FALTA
   cron.schedule(
     '0 1 * * *',
     async () => {
-      logger.info(`[CRON] Verificando tickets por lesión sin marcar...`);
+      logger.info(`[CRON] Verificando tickets programados sin marcar...`);
       try {
-        await recuperacionCronService.ejecutarLimpiezaTicketsPorLesion();
+        await recuperacionCronService.ejecutarLimpiezaTicketsProgramados();
       } catch (error) {
-        logger.error('[CRON ERROR] Falló la verificación de tickets por lesión: ', error);
+        logger.error('[CRON ERROR] Falló la verificación de tickets programados: ', error);
       }
     },
     { timezone: 'America/Lima' }
