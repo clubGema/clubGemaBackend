@@ -54,6 +54,7 @@ export const iniciarCronJobs = () => {
     { timezone: 'America/Lima' }
   );
 
+
   // ------------------------------------------------------------------
   // TAREA 3: EL PROFETA (Todos los días a las 00:30 AM)  30 0 * * *
   // Objetivo: Generar la deuda del próximo mes X días antes del vencimiento.
