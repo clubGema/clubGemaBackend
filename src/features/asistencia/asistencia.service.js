@@ -296,7 +296,7 @@ export const asistenciaService = {
         niveles_entrenamiento: true,
         canchas: { include: { sedes: true } },
         inscripciones: {
-          where: { estado: { in: ['ACTIVO', 'PEN-RECU'] } },
+          where: { estado: { in: ['ACTIVO', 'PEN-RECU', 'FINALIZADO'] } },
           include: {
             alumnos: {
               include: {
@@ -439,9 +439,9 @@ export const asistenciaService = {
       };
     });
   },
- previsualizarfechasFuturas: async (data) => {
+  previsualizarfechasFuturas: async (data) => {
     const { alumno_id, horario_ids } = data;
-    
+
     try {
       const hoy = dayjs().startOf('day');
       let resultados = [];
@@ -453,7 +453,7 @@ export const asistenciaService = {
 
       for (const horario of horarios) {
         let fechasEsteDia = [];
-        
+
         // 🚩 AJUSTE CRÍTICO PARA FORMATO 1-7: Dayjs necesita 0-6
         const diaMapeado = horario.dia_semana === 7 ? 0 : horario.dia_semana;
         let fechaBase = hoy.day(diaMapeado);
@@ -479,22 +479,22 @@ export const asistenciaService = {
           // ✅ FIX: Extraemos solo el "YYYY-MM-DD" en UTC puro antes de que Node/Dayjs lo conviertan a hora local y le resten 5 horas
           const fechaStringPura = ultimaClase.fecha.toISOString().split('T')[0];
           const fechaUltima = dayjs(fechaStringPura).startOf('day');
-          
+
           // Si su última clase es hoy, mañana o en el futuro, enganchamos 7 días después
           if (fechaUltima.isAfter(hoy.subtract(1, 'day'))) {
             fechaBase = fechaUltima.add(7, 'day');
           }
         }
-        
+
         // Opción A: Inicio Inmediato (o fecha de enganche segura)
         fechasEsteDia.push(fechaBase.format('YYYY-MM-DD'));
-        
+
         // Opción B: Próximo Turno (+7 días sobre la base calculada)
         fechasEsteDia.push(fechaBase.add(7, 'day').format('YYYY-MM-DD'));
-        
+
         resultados.push(fechasEsteDia);
       }
-      
+
       return resultados;
     } catch (error) {
       console.error("Error en previsualizarfechasFuturas:", error);
