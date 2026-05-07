@@ -660,12 +660,24 @@ export const inscripcionService = {
       const count = await asistenciaService.eliminarClases(tx, insc.id, insc.fecha_inscripcion_original);
       console.log(`Se eliminaron ${count} registros de asistencia.`)
 
-      const updateInsc = await tx.inscripciones.update({
+      await tx.inscripciones.update({
         where: { alumno_id: insc.alumno_id, id: insc.id },
         data: {
+          estado: 'FINALIZADO',
+          actualizado_en: new Date()
+        },
+      })
+
+      const createdInsc = await tx.inscripciones.create({
+        data: {
+          alumno_id: insc.alumno_id,
           horario_id: horarioId,
           fecha_inscripcion: insc.fecha_inscripcion_original, //Para asegurar que se reinicie la fecha de inscripción con la original (PARA CASOS AISLADOS DE REPROGRAMACIÓN MASIVA)
-          actualizado_en: new Date()
+          fecha_inscripcion_original: insc.fecha_inscripcion_original,
+          estado: 'ACTIVO',
+          actualizado_en: new Date(),
+          creado_en: insc.creado_en,
+          id_grupo_transaccion: insc.id_grupo_transaccion,
         },
         include: {
           horarios_clases: true
@@ -673,20 +685,20 @@ export const inscripcionService = {
       })
 
       await asistenciaService.generarClasesFuturas(tx, {
-        inscripcion_id: updateInsc.id,
-        dia_semana: updateInsc.horarios_clases.dia_semana,
+        inscripcion_id: createdInsc.id,
+        dia_semana: createdInsc.horarios_clases.dia_semana,
         usuario_admin_id: Number.parseInt(adminId),
-        coordinador_id: updateInsc.horarios_clases.coordinador_id,
-        fecha_inicio: updateInsc.fecha_inscripcion,
+        coordinador_id: createdInsc.horarios_clases.coordinador_id,
+        fecha_inicio: createdInsc.fecha_inscripcion,
       })
 
       const hoy = new Date()
       hoy.setHours(12, 0, 0, 0)
       await tx.registros_asistencia.updateMany({
         where: {
-          inscripcion_id: updateInsc.id,
+          inscripcion_id: createdInsc.id,
           fecha: {
-            gte: updateInsc.fecha_inscripcion,
+            gte: createdInsc.fecha_inscripcion,
             lt: hoy
           }
         },
@@ -697,7 +709,7 @@ export const inscripcionService = {
 
       await tx.notificaciones.create({
         data: {
-          alumno_id: updateInsc.alumno_id,
+          alumno_id: createdInsc.alumno_id,
           titulo: `Cambio de Horario por el Administrador`,
           mensaje: `Tu horario ha sido modificado, verifica tu plan de entrenamiento.`,
           tipo: 'WARNING',
@@ -705,7 +717,7 @@ export const inscripcionService = {
         }
       });
 
-      return updateInsc
+      return createdInsc
     });
   },
   // ... al final de inscripcionService
