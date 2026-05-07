@@ -389,35 +389,39 @@ export const claseService = {
    * excluyendo aquellas fechas que ya hayan sido reprogramadas masivamente.
    */
   obtenerFechasDisponibles: async (horario_id) => {
-    // Obtener la fecha de hoy en formato UTC para evitar desfases horarios nocturnos
-    const hoyStr = new Date().toISOString().substring(0, 10);
-    const hoy = new Date(hoyStr);
-
-    // Buscamos todos los registros asociados a las inscripciones de este horario
-    const registros = await prisma.registros_asistencia.findMany({
-      where: {
-        inscripciones: {
-          horario_id: Number(horario_id),
-          estado: 'ACTIVO',
-        },
-        estado: {
-          notIn: ['REPROGRAMADO', 'CANCELADO'], // No mostrar fechas ya reprogramadas
-        },
-        fecha: {
-          gte: hoy, // Solo fechas que no han pasado (hoy o futuro)
-        },
-      },
-      select: {
-        fecha: true,
-      },
-      distinct: ['fecha'], // Obtener fechas únicas
-      orderBy: {
-        fecha: 'asc',
-      },
+    const horario = await prisma.horarios_clases.findUnique({
+      where: { id: Number(horario_id) },
     });
 
-    // Mapeamos a un formato string normalizado YYYY-MM-DD
-    return registros.map((r) => r.fecha.toISOString().substring(0, 10));
+    if (!horario) return [];
+
+    const diasPermitidos = [horario.dia_semana];
+    const fechasDisponibles = [];
+
+    const hoy = new Date();
+    let fechaActual = new Date();
+    fechaActual.setHours(0, 0, 0, 0);
+
+    const fechaLimite = new Date();
+    fechaLimite.setMonth(hoy.getMonth() + 3);
+
+    while (fechaActual <= fechaLimite) {
+      let diaSemanaJS = fechaActual.getDay();
+
+      if (diaSemanaJS === 0) diaSemanaJS = 7;
+
+      if (diasPermitidos.includes(diaSemanaJS)) {
+        const año = fechaActual.getFullYear();
+        const mes = String(fechaActual.getMonth() + 1).padStart(2, '0');
+        const dia = String(fechaActual.getDate()).padStart(2, '0');
+
+        fechasDisponibles.push(`${año}-${mes}-${dia}`);
+      }
+
+      fechaActual.setDate(fechaActual.getDate() + 1);
+    }
+
+    return fechasDisponibles;
   },
 
   /**
