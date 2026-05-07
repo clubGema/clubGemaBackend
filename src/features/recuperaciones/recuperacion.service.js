@@ -579,10 +579,52 @@ const eliminarRecuperacionAdmin = async (recuperacionId) => {
     throw new ApiError('La recuperación no existe.', 404);
   }
 
-  // Eliminamos el ticket. 
-  // Al eliminarlo, el alumno ya no verá el "botón" para agendar esta falta.
-  return await prisma.recuperaciones.delete({
-    where: { id: Number.parseInt(recuperacionId) }
+  return await prisma.$transaction(async (tx) => {
+    
+    if (ticket.es_por_lesion) {
+      // 1. Restaurar asistencia usando la relación directa
+      // Si el ticket tiene el ID del registro de asistencia, lo usamos para ser exactos
+      if (ticket.registro_asistencia_id) {
+        await tx.registros_asistencia.update({
+          where: { id: ticket.registro_asistencia_id },
+          data: { estado: 'PROGRAMADA' }
+        });
+      }
+
+      if (ticket.solicitud_lesion_id) {
+        // 2. Desvincular de Congelamientos
+        await tx.congelamientos.updateMany({
+          where: { solicitud_lesion_id: ticket.solicitud_lesion_id },
+          data: { solicitud_lesion_id: null }
+        });
+
+        // 3. Desvincular de otras posibles recuperaciones
+        await tx.recuperaciones.updateMany({
+          where: { solicitud_lesion_id: ticket.solicitud_lesion_id },
+          data: { solicitud_lesion_id: null }
+        });
+      }
+
+      // 4. Borrar la recuperación actual
+      await tx.recuperaciones.delete({
+        where: { id: ticket.id }
+      });
+
+      // 5. Borrar la solicitud de lesión definitiva
+      if (ticket.solicitud_lesion_id) {
+        await tx.solicitudes_lesion.delete({
+          where: { id: ticket.solicitud_lesion_id }
+        });
+      }
+      
+      return { message: 'Depuración exacta completada.' };
+
+    } else {
+      // Si no es lesión, simplemente borramos el registro
+      return await tx.recuperaciones.delete({
+        where: { id: ticket.id }
+      });
+    }
   });
 };
 
