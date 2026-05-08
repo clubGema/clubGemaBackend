@@ -38,6 +38,22 @@ export const claseService = {
     fechaOrigenDate.setUTCHours(12, 0, 0, 0);
     const dateOrigenStr = formatFechaEs(fechaOrigenDate);
 
+    // 🔥 AQUI AGREGAMOS LA VALIDACIÓN AMIGABLE 🔥
+    // Verificamos si ya existe antes de que Prisma tire el error feo de Unique Constraint
+    const reprogramacionPrevia = await prisma.reprogramaciones_clases.findFirst({
+      where: {
+        horario_id: horario_origen_id,
+        fecha_origen: fechaOrigenDate,
+        estado: 'ACTIVO' 
+      }
+    });
+
+    if (reprogramacionPrevia) {
+      // Este ApiError llegará limpio a tu frontend y se mostrará en el Toast
+      throw new ApiError(`El bloque del ${dateOrigenStr} ya fue reprogramado previamente.`, 400);
+    }
+    // 🔥 FIN DE LA VALIDACIÓN 🔥
+
     const importUUID = await import('node:crypto');
     const grupo_uuid = importUUID.randomUUID();
 
@@ -423,6 +439,48 @@ export const claseService = {
 
     return fechasDisponibles;
   },
+  obtenerFechasPasadas: async (horario_id) => {
+  const horario = await prisma.horarios_clases.findUnique({
+    where: { id: Number(horario_id) },
+  });
+
+  if (!horario) return [];
+
+  const diasPermitidos = [horario.dia_semana];
+  const fechasDisponibles = [];
+
+  // 1. El límite es el final del día de HOY
+  const fechaLimite = new Date();
+  fechaLimite.setHours(23, 59, 59, 999);
+
+  // 2. El punto de inicio es hace EXACTAMENTE 2 MESES atrás
+  let fechaActual = new Date();
+  fechaActual.setMonth(fechaActual.getMonth() - 2);
+  fechaActual.setHours(0, 0, 0, 0);
+
+  // 3. El bucle que recorre día por día desde hace 2 meses hasta hoy
+  while (fechaActual <= fechaLimite) {
+    let diaSemanaJS = fechaActual.getDay();
+    if (diaSemanaJS === 0) diaSemanaJS = 7; // Convertir domingo a 7
+
+    if (diasPermitidos.includes(diaSemanaJS)) {
+      const año = fechaActual.getFullYear();
+      const mes = String(fechaActual.getMonth() + 1).padStart(2, '0');
+      const dia = String(fechaActual.getDate()).padStart(2, '0');
+
+      // 🔥 TRUCO: Usamos unshift() en lugar de push()
+      // Esto hace que las fechas se agreguen al inicio del arreglo.
+      // Así, el select en tu frontend mostrará el martes pasado arriba del todo, 
+      // y el martes de hace 2 meses hasta abajo.
+      fechasDisponibles.unshift(`${año}-${mes}-${dia}`);
+    }
+
+    // Avanzar un día
+    fechaActual.setDate(fechaActual.getDate() + 1);
+  }
+
+  return fechasDisponibles;
+},
 
   /**
    * Obtiene la lista de horarios que tienen al menos un registro de asistencia generado,

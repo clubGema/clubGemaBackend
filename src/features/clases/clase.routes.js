@@ -55,4 +55,11 @@ router.get(
   claseController.obtenerDetalle
 );
 
+router.get(
+  '/:horario_id/fechas-pasadas',
+  authorize('Administrador', 'Coordinador'),
+  validateParams(claseSchema.horarioIdParamSchema), // Asumo que usas la misma validación del ID
+  claseController.obtenerFechasPasadas
+);
+
 export default router;
