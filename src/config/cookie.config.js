@@ -19,36 +19,42 @@ const getJwtExpiresInMs = () => {
 export const ACCESS_TOKEN_MAX_AGE = getJwtExpiresInMs();
 export const REFRESH_TOKEN_MAX_AGE = REFRESH_TOKEN_EXPIRATION_DAYS * ONE_DAY;
 
-export const getCookieOptions = () => {
+const SAFARI_REGEX = /Safari/i;
+const NON_SAFARI_REGEX = /Chrome|Chromium|Edg|OPR|CriOS|FxiOS/i;
+
+export const isSafariUserAgent = (userAgent = '') =>
+  SAFARI_REGEX.test(userAgent) && !NON_SAFARI_REGEX.test(userAgent);
+
+export const getCookieOptions = (userAgent = '') => {
   const isProd = NODE_ENV === 'production';
   const isCrossSite = COOKIE_CROSS_SITE;
-  const usePartitioned = isCrossSite && COOKIE_PARTITIONED;
+  const usePartitioned = isCrossSite && COOKIE_PARTITIONED && !isSafariUserAgent(userAgent);
   return {
     httpOnly: true,
-    secure: isProd || isCrossSite,
+    secure: isCrossSite ? true : isProd,
     sameSite: isCrossSite ? 'none' : 'lax',
     ...(usePartitioned ? { partitioned: true } : {}),
     path: '/',
   };
 };
 
-export const getAccessTokenCookieOptions = () => ({
-  ...getCookieOptions(),
+export const getAccessTokenCookieOptions = (userAgent = '') => ({
+  ...getCookieOptions(userAgent),
   maxAge: ACCESS_TOKEN_MAX_AGE,
 });
 
-export const getRefreshTokenCookieOptions = () => ({
-  ...getCookieOptions(),
+export const getRefreshTokenCookieOptions = (userAgent = '') => ({
+  ...getCookieOptions(userAgent),
   maxAge: REFRESH_TOKEN_MAX_AGE,
 });
 
-export const setAuthCookies = (res, { accessToken, refreshToken }) => {
-  res.cookie('accessToken', accessToken, getAccessTokenCookieOptions());
-  res.cookie('refreshToken', refreshToken, getRefreshTokenCookieOptions());
+export const setAuthCookies = (res, { accessToken, refreshToken }, userAgent = '') => {
+  res.cookie('accessToken', accessToken, getAccessTokenCookieOptions(userAgent));
+  res.cookie('refreshToken', refreshToken, getRefreshTokenCookieOptions(userAgent));
 };
 
-export const clearAuthCookies = (res) => {
-  const options = getCookieOptions();
+export const clearAuthCookies = (res, userAgent = '') => {
+  const options = getCookieOptions(userAgent);
   res.clearCookie('accessToken', { ...options });
   res.clearCookie('refreshToken', { ...options });
 };

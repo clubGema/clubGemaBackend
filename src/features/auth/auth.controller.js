@@ -6,24 +6,22 @@ import { ApiError } from '../../shared/utils/error.util.js';
 import { logger } from '../../shared/utils/logger.util.js';
 
 /**
- * Extrae y valida el refreshToken de las cookies.
+ * Extrae y valida el refresh token desde cookie o body para fallback cross-site.
  */
-const getRefreshTokenFromCookies = (req) => {
-  const refreshToken = req.cookies.refreshToken;
+const getRefreshTokenFromRequest = (req) => {
+  const refreshToken = req.cookies?.refreshToken || req.body?.refreshToken;
   if (!refreshToken || typeof refreshToken !== 'string' || refreshToken.trim().length === 0) {
     throw new ApiError('Refresh token es requerido o inválido', 401);
   }
   return refreshToken;
 };
 
-// La función clearAuthCookies ha sido movida a config/cookie.config.js para centralizar la lógica.
-
 export const authController = {
   login: catchAsync(async (req, res) => {
     const { username, password } = req.body;
     const result = await authService.login({ username, password });
 
-    setAuthCookies(res, result);
+    setAuthCookies(res, result, req.headers['user-agent']);
     logger.info(`Usuario '${username}' inició sesión desde la IP: ${req.ip}`);
 
     return apiResponse.success(res, {
@@ -41,22 +39,22 @@ export const authController = {
   }),
 
   refresh: catchAsync(async (req, res) => {
-    const refreshToken = getRefreshTokenFromCookies(req);
+    const refreshToken = getRefreshTokenFromRequest(req);
     const result = await authService.refreshAccessToken(refreshToken);
 
-    setAuthCookies(res, result);
+    setAuthCookies(res, result, req.headers['user-agent']);
 
     return apiResponse.success(res, {
       message: 'Access token renovado',
-      data: result.user,
+      data: result,
     });
   }),
 
   logout: catchAsync(async (req, res) => {
-    const refreshToken = getRefreshTokenFromCookies(req);
+    const refreshToken = getRefreshTokenFromRequest(req);
     await authService.logout(refreshToken);
 
-    clearAuthCookies(res);
+    clearAuthCookies(res, req.headers['user-agent']);
     logger.info(`Sesión cerrada desde IP: ${req.ip}`);
 
     return apiResponse.success(res, {
@@ -67,7 +65,7 @@ export const authController = {
   revokeAllSessions: catchAsync(async (req, res) => {
     await authService.revokeAllTokens(req.user.id);
 
-    clearAuthCookies(res);
+    clearAuthCookies(res, req.headers['user-agent']);
     logger.info(`Usuario ID '${req.user.id}' ha revocado globalmente todas sus sesiones.`);
 
     return apiResponse.success(res, {
@@ -108,7 +106,7 @@ export const authController = {
   changePassword: catchAsync(async (req, res) => {
     const { currentPassword, newPassword } = req.body;
     await authService.changePassword(req.user.id, currentPassword, newPassword);
-    
+
     logger.info(`Usuario ID '${req.user.id}' actualizó su contraseña.`);
 
     return apiResponse.success(res, { message: 'Contraseña actualizada correctamente' });
@@ -118,8 +116,8 @@ export const authController = {
     const updatedUser = await authService.updateProfile(req.user.id, req.body);
     logger.info(`Usuario ID '${req.user.id}' actualizó sus datos de perfil.`);
     return apiResponse.success(res, {
-        message: 'Perfil actualizado exitosamente',
-        data: updatedUser
+      message: 'Perfil actualizado exitosamente',
+      data: updatedUser,
     });
   }),
 };

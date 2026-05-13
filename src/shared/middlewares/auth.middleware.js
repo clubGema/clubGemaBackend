@@ -3,9 +3,20 @@ import { JWT_SECRET } from '../../config/secret.config.js';
 import { prisma } from '../../config/database.config.js';
 import { apiResponse } from '../utils/response.util.js';
 
+const getAccessTokenFromRequest = (req) => {
+  const cookieToken = req.cookies?.accessToken;
+  if (cookieToken) return cookieToken;
+
+  const authorization = req.headers.authorization;
+  if (!authorization?.startsWith('Bearer ')) return null;
+
+  const bearerToken = authorization.slice('Bearer '.length).trim();
+  return bearerToken.length > 0 ? bearerToken : null;
+};
+
 export const authenticate = async (req, res, next) => {
   try {
-    const token = req.cookies.accessToken;
+    const token = getAccessTokenFromRequest(req);
 
     if (!token) {
       return apiResponse.error(res, 'No se proporcionó token de autenticación', 401);
@@ -63,7 +74,7 @@ export const authenticate = async (req, res, next) => {
 
 export const optionalAuth = async (req, res, next) => {
   try {
-    const token = req.cookies.accessToken;
+    const token = getAccessTokenFromRequest(req);
 
     if (!token) {
       req.user = null;
