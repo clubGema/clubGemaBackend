@@ -1,4 +1,4 @@
-import { setAuthCookies, clearAuthCookies } from '../../config/cookie.config.js';
+import { setAuthCookies, clearAuthCookies, isSafariUserAgent } from '../../config/cookie.config.js';
 import { authService } from './auth.service.js';
 import { catchAsync } from '../../shared/utils/catchAsync.util.js';
 import { apiResponse } from '../../shared/utils/response.util.js';
@@ -16,6 +16,14 @@ const getRefreshTokenFromRequest = (req) => {
   return refreshToken;
 };
 
+const buildAuthResponseData = (req, result) => {
+  if (isSafariUserAgent(req.headers['user-agent'])) {
+    return result;
+  }
+
+  return { user: result.user };
+};
+
 export const authController = {
   login: catchAsync(async (req, res) => {
     const { username, password } = req.body;
@@ -26,7 +34,7 @@ export const authController = {
 
     return apiResponse.success(res, {
       message: 'Login exitoso',
-      data: result,
+      data: buildAuthResponseData(req, result),
     });
   }),
 
@@ -46,7 +54,7 @@ export const authController = {
 
     return apiResponse.success(res, {
       message: 'Access token renovado',
-      data: result,
+      data: buildAuthResponseData(req, result),
     });
   }),
 
