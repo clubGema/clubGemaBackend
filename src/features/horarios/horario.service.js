@@ -146,6 +146,11 @@ const formatearHorario = (h) => ({
 export const horarioService = {
   getAllHorarios: async () => {
     const horarios = await prisma.horarios_clases.findMany({
+      where: {
+        canchas: {
+          sedes: { activo: true }
+        }
+      },
       select: HORARIO_SELECT,
     });
     return horarios.map(formatearHorario);
