@@ -45,15 +45,19 @@ class ClaseCronService {
 
                 const susInscripciones = await tx.inscripciones.findMany({
                     where: { alumno_id: alumnoId, estado: 'ACTIVO' },
-                    select: { horarios_clases: { select: { dia_semana: true } } }
+                    select: {
+                        id: true,
+                        horarios_clases: { select: { dia_semana: true } }
+                    }
                 });
 
                 const diasDelAlumno = [...new Set(susInscripciones.map(s => s.horarios_clases.dia_semana))];
 
                 // Buscamos la clase inmediatamente anterior a esta reposición (el final de su ciclo regular)
+                const idInscAlum = susInscripciones.map(i => i.id)
                 const claseAnterior = await tx.registros_asistencia.findFirst({
                     where: {
-                        inscripcion_id: reposicion.inscripcion_id,
+                        inscripcion_id: { in: idInscAlum },
                         fecha: { lt: reposicion.fecha } // Que sea antes de la fecha actual de la reposición
                     },
                     orderBy: { fecha: 'desc' },
