@@ -510,11 +510,16 @@ export const usuarioService = {
 
             // 🎾 INSCRIPCIONES PARA SEDE, NIVEL Y CORTE
             inscripciones: {
-              where: { estado: 'ACTIVO' },
+              // ❌ ELIMINA EL WHERE: where: { estado: 'ACTIVO' },
+              orderBy: { fecha_inscripcion: 'desc' }, // 🔥 La más reciente siempre será la [0]
               select: {
+                estado: true, // 🔥 VITAL: Ahora necesitas saber el estado en el frontend
                 fecha_inscripcion: true,
                 horarios_clases: {
                   select: {
+                    hora_inicio: true, 
+                    hora_fin: true,    
+                    dia_semana: true,
                     niveles_entrenamiento: { select: { nombre: true } },
                     canchas: {
                       select: {
