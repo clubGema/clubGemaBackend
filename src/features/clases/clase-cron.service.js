@@ -105,6 +105,7 @@ class ClaseCronService {
         }, {
             timeout: 30000
         });
+
         logger.info(
             `Se actualizaron las fechas ${contadorActualizados} reposiciones.`
         );
