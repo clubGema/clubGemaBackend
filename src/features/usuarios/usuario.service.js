@@ -482,6 +482,7 @@ export const usuarioService = {
         fecha_nacimiento: true,
         email: true,
         genero: true,
+        username: true,
         alumnos: {
           select: {
             // 🔥 CAMPOS DE SALUD (Sacados de tu imagen b09aa9)
