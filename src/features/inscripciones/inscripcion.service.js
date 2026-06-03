@@ -360,7 +360,7 @@ export const inscripcionService = {
     return await prisma.inscripciones.findMany({
       where: {
         alumno_id: Number.parseInt(alumnoId),
-        estado: { not: 'FINALIZADO' }
+        estado: { not: ['FINALIZADO', 'PEN-RECU'] }
       },
       include: {
         horarios_clases: {
