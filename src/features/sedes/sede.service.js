@@ -127,7 +127,7 @@ export const sedeService = {
 
   getAllSedes: async (filters = {}) => {
     const page = Number(filters.page) || 1;
-    const limit = Number(filters.limit) || 10;
+    const limit = Number(filters.limit) || 20;
     const { page: _p, limit: _l, ...rest } = filters;
 
     const where = buildWhereFilters(rest);
@@ -308,14 +308,14 @@ export const sedeService = {
           const yaExisten =
             nombresNuevos.length > 0
               ? await tx.canchas.findMany({
-                  where: {
-                    sede_id: id,
-                    OR: nombresNuevos.map((nombre) => ({
-                      nombre: { equals: nombre, mode: 'insensitive' },
-                    })),
-                  },
-                  select: { nombre: true },
-                })
+                where: {
+                  sede_id: id,
+                  OR: nombresNuevos.map((nombre) => ({
+                    nombre: { equals: nombre, mode: 'insensitive' },
+                  })),
+                },
+                select: { nombre: true },
+              })
               : [];
           const nombresExistentes = new Set(yaExisten.map((c) => c.nombre.toLowerCase()));
           const canchasParaCrear = canchasNuevasUnicas.filter(
