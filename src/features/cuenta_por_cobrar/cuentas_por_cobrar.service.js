@@ -336,6 +336,7 @@ export const CuentasPorCobrarService = {
           where: { id: ins.id },
           data: {
             fecha_inscripcion: dayjs(fechaInicioNueva).toDate(),
+            fecha_inscripcion_original: dayjs(fechaInicioNueva).toDate(),
             actualizado_en: new Date(),
             estado: 'PENDIENTE_PAGO'
           }

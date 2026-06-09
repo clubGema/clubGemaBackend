@@ -601,6 +601,7 @@ export const inscripcionService = {
             where: { id: idIns },
             data: {
               fecha_inscripcion: new Date(parteFecha),
+              fecha_inscripcion_original: new Date(parteFecha),
               actualizado_en: new Date()
             }
           });
