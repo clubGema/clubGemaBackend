@@ -40,9 +40,9 @@ export const calcularSaldosAlcancía = async (tx, pagoActual) => {
 
   // El saldo real que queda después de esta aprobación
   const saldoRestante = Math.max(0, deudaTotal - totalConEstePago);
-  
+
   // Solo marcamos como completo si el saldo es prácticamente 0 (margen de 1 céntimo)
-  const esPagoCompleto = saldoRestante <= 0.01; 
+  const esPagoCompleto = saldoRestante <= 0.01;
 
   return { saldoRestante, esPagoCompleto };
 };
@@ -57,9 +57,9 @@ export const definirEvolucionDeEstados = async (tx, pago, esAprobado, esPagoComp
     const aprobados = await tx.pagos.count({
       where: { cuenta_id: pago.cuenta_id, estado_validacion: 'APROBADO' },
     });
-    
+
     return {
-      nuevoEstadoDeuda: aprobados > 0 ? 'PARCIAL' : 'PENDIENTE',
+      nuevoEstadoDeuda: aprobados > 0 ? 'PARCIAL' : 'RECHAZADO',
       activarAlumno: false // Si se rechaza un pago, no hay activación de nada
     };
   }
@@ -68,9 +68,9 @@ export const definirEvolucionDeEstados = async (tx, pago, esAprobado, esPagoComp
   return {
     // La deuda pasa a PAGADA solo si esPagoCompleto es true, sino se queda/pasa a PARCIAL
     nuevoEstadoDeuda: esPagoCompleto ? 'PAGADA' : 'PARCIAL',
-    
+
     // CAMBIO CRÍTICO: El alumno SOLO se activa si terminó de pagar todo.
     // Si solo abonó una parte, sus inscripciones siguen en espera.
-    activarAlumno: esAprobado 
+    activarAlumno: esAprobado
   };
 };
