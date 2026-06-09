@@ -649,8 +649,15 @@ export const inscripcionService = {
     // if (!adminId) throw new ApiError('El campo adminId es requerido', 400); //No es necesario
 
     return await prisma.$transaction(async (tx) => {
-      const insc = await tx.inscripciones.findUnique({
+      const insc = await tx.inscripciones.findFirst({
         where: { alumno_id: alumnoId, id: inscripcionId },
+        include: {
+          inscripciones_deudas_link: {
+            orderBy: {
+              creado_en: 'desc',
+            }
+          },
+        }
       })
       if (!insc) throw new ApiError('No existe inscripción con esa ID', 404);
 
@@ -682,6 +689,14 @@ export const inscripcionService = {
         },
         include: {
           horarios_clases: true
+        }
+      })
+
+      await tx.inscripciones_deudas_link.create({
+        data: {
+          inscripcion_id: createdInsc.id,
+          cuenta_id: insc.inscripciones_deudas_link[0].cuenta_id,
+          monto_asignado: Number(insc.inscripciones_deudas_link[0].monto_asignado),
         }
       })
 
