@@ -57,8 +57,9 @@ export const inscripcionService = {
         const grupoUuid = crypto.randomUUID(); // ID único para este paquete de compra
 
         // La fecha de inicio es la electiva o hoy. Cada slot tendrá esta misma fecha de inicio.
-        const inicioReal = fecha_inicio_electiva ? dayjs(fecha_inicio_electiva).tz(TZ_LIMA).hour(12).toDate() : dayjs().tz(TZ_LIMA).hour(12).toDate();
-
+        const inicioReal = fecha_inicio_electiva
+          ? dayjs.tz(fecha_inicio_electiva, TZ_LIMA).hour(12).toDate()
+          : dayjs.tz(TZ_LIMA).hour(12).toDate();
         for (const idHorario of horario_ids) {
           // Validar aforo por cada clase
           await Validators.validarAforoHorario(tx, idHorario, fechaLimiteZombie);
