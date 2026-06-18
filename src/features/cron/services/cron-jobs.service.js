@@ -214,19 +214,20 @@ export const iniciarCronJobs = () => {
     { timezone: 'America/Lima' }
   );
 
-  // Cron para cambiar de estado a las recuperaciones programadas que no fueron marcadas como PRESENTE / FALTA
-  cron.schedule(
-    '0 1 * * *',
-    async () => {
-      logger.info(`[CRON] Verificando tickets programados sin marcar...`);
-      try {
-        await recuperacionCronService.ejecutarLimpiezaTicketsProgramados();
-      } catch (error) {
-        logger.error('[CRON ERROR] Falló la verificación de tickets programados: ', error);
-      }
-    },
-    { timezone: 'America/Lima' }
-  );
+  // Deshabilitado para que el coordinador pueda marcar al recuperante, incluso días después
+  // // Cron para cambiar de estado a las recuperaciones programadas que no fueron marcadas como PRESENTE / FALTA
+  // cron.schedule(
+  //   '0 1 * * *',
+  //   async () => {
+  //     logger.info(`[CRON] Verificando tickets programados sin marcar...`);
+  //     try {
+  //       await recuperacionCronService.ejecutarLimpiezaTicketsProgramados();
+  //     } catch (error) {
+  //       logger.error('[CRON ERROR] Falló la verificación de tickets programados: ', error);
+  //     }
+  //   },
+  //   { timezone: 'America/Lima' }
+  // );
 
   // ------------------------------------------------------------------
   // TAREA: EL SINCRONIZADOR DINÁMICO (2:10 am)

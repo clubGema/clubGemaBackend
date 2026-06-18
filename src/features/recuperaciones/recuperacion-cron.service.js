@@ -19,22 +19,23 @@ class RecuperacionCronService {
     logger.info(`Se marcaron ${ticketsActualizados.count} tickets como vencidos.`);
   }
 
-  async ejecutarLimpiezaTicketsProgramados() {
-    const hoy = new Date();
-    hoy.setHours(0, 0, 0, 0)
-    const ticketsActualizados = await prisma.recuperaciones.updateMany({
-      where: {
-        estado: 'PROGRAMADA',
-        fecha_programada: {
-          lt: hoy,
-        }
-      },
-      data: {
-        estado: 'COMPLETADA_FALTA',
-      }
-    })
-    logger.info(`Se actualizaron ${ticketsActualizados.count} recuperaciones como COMPLETADA_FALTA.`);
-  }
+  // Deshabilitado para que el coordinador pueda marcar al recuperante, incluso días después
+  // async ejecutarLimpiezaTicketsProgramados() {
+  //   const hoy = new Date();
+  //   hoy.setUTCHours(0, 0, 0, 0)
+  //   const ticketsActualizados = await prisma.recuperaciones.updateMany({
+  //     where: {
+  //       estado: 'PROGRAMADA',
+  //       fecha_programada: {
+  //         lt: hoy,
+  //       }
+  //     },
+  //     data: {
+  //       estado: 'COMPLETADA_FALTA',
+  //     }
+  //   })
+  //   logger.info(`Se actualizaron ${ticketsActualizados.count} recuperaciones como COMPLETADA_FALTA.`);
+  // }
 }
 
 export const recuperacionCronService = new RecuperacionCronService();
