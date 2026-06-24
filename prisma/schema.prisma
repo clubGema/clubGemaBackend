@@ -95,7 +95,7 @@ model cuentas_por_cobrar {
   id                   Int                    @id @default(autoincrement())
   alumno_id            Int
   concepto_id          Int?
-  detalle_adicional    String?                @db.VarChar(200)
+  detalle_adicional    String?                @db.Text
   monto_final          Decimal                @db.Decimal(10, 2)
   fecha_vencimiento    DateTime               @db.Date
   estado               String?                @default("PENDIENTE") @db.VarChar(20)

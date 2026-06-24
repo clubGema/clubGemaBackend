@@ -5,6 +5,7 @@ import * as Validators from './validators/inscripcion.validator.js';
 import * as Logic from './logic/inscripcion.logic.js';
 import { asistenciaService } from '../asistencia/asistencia.service.js';
 import { ApiError } from '../../shared/utils/error.util.js';
+import { CuentasPorCobrarService } from '../cuenta_por_cobrar/cuentas_por_cobrar.service.js';
 
 // 🔥 IMPORTAMOS DAYJS Y CONFIGURAMOS LIMA PARA LOS LOGS 🔥
 import dayjs from 'dayjs';
@@ -473,7 +474,18 @@ export const inscripcionService = {
       const inscripcionId = Number(id);
 
       const inscripcion = await tx.inscripciones.findUnique({
-        where: { id: inscripcionId }
+        where: { id: inscripcionId },
+        include: {
+          inscripciones_deudas_link: {
+            select: {
+              cuentas_por_cobrar: true
+            },
+            orderBy: {
+              creado_en: 'desc'
+            },
+            take: 1
+          }
+        }
       });
 
       if (!inscripcion) throw new Error('Inscripción no encontrada');
@@ -486,6 +498,59 @@ export const inscripcionService = {
           actualizado_en: new Date()
         }
       });
+
+      if (inscripcion.estado === 'POR_VALIDAR') {
+        const inscPaq = await tx.inscripciones.findMany({
+          where: { id_grupo_transaccion: inscripcion.id_grupo_transaccion }
+        })
+        const cuenta = inscripcion.inscripciones_deudas_link?.[0]?.cuentas_por_cobrar;
+        if (!cuenta) throw new Error('Cuenta no encontrada');
+
+        if (inscPaq.length > 0) {
+          const esLegacy = await Logic.detectarRegimenAlumno(tx, inscripcion.alumno_id)
+          const cpto = await tx.catalogo_conceptos.findFirst({
+            where: {
+              activo: true,
+              es_vigente: !esLegacy,
+              cantidad_clases_semanal: inscPaq.length,
+            }
+          })
+          if (!cpto) throw new Error('Concepto de pago no encontrado');
+
+          let montoIndividual = Number(cpto.precio_base);
+          if (cuenta.detalle_adicional.toLowerCase().includes('camiseta')) montoIndividual += 50;
+          const { monto_final } = await CuentasPorCobrarService.actualizar(tx, cuenta.id, {
+            alumno_id: cuenta.alumno_id,
+            concepto_id: cpto.id,
+            detalle_adicional: `${cuenta.detalle_adicional} | Plan Actualizado por Finalización Voluntaria: ${cpto.cantidad_clases_semanal} clase(s)`,
+            monto_final: montoIndividual,
+            fecha_vencimiento: cuenta.fecha_vencimiento,
+            estado: cuenta.estado,
+          })
+
+          await tx.inscripciones_deudas_link.deleteMany({
+            where: {
+              inscripcion_id: inscripcion.id,
+              cuenta_id: cuenta.id,
+            }
+          })
+
+          await tx.pagos.updateMany({
+            where: { cuenta_id: cuenta.id },
+            data: {
+              monto_pagado: monto_final,
+            }
+          })
+        } else {
+          await tx.inscripciones_deudas_link.deleteMany({
+            where: {
+              inscripcion_id: inscripcion.id,
+              cuenta_id: cuenta.id,
+            }
+          })
+          await CuentasPorCobrarService.eliminar(cuenta.id, true, tx);
+        }
+      }
 
       return {
         success: true,

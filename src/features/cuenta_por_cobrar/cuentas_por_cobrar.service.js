@@ -98,57 +98,55 @@ export const CuentasPorCobrarService = {
     });
   },
 
-  async eliminar(id, restaurarBeneficios = false) {
-    return await prisma.$transaction(async (tx) => {
-      console.log(`🔍 [DEBUG] Iniciando eliminación de cuenta ID: ${id}`);
+  async eliminar(id, restaurarBeneficios = false, tx) {
+    console.log(`🔍 [DEBUG] Iniciando eliminación de cuenta ID: ${id}`);
 
-      const cuenta = await tx.cuentas_por_cobrar.findUnique({
-        where: { id: parseInt(id) },
-        include: { descuentos_aplicados: true, pagos: true },
-      });
-
-      if (!cuenta) {
-        console.log(`⚠️ [DEBUG] La cuenta ${id} ya no existe.`);
-        return;
-      }
-
-      // 🔥 PASO 0: LIMPIAR EL PUENTE (Integridad Referencial)
-      console.log(`Step 0: Borrando vínculos en inscripciones_deudas_link...`);
-      await tx.inscripciones_deudas_link.deleteMany({
-        where: { cuenta_id: cuenta.id },
-      });
-
-      // PASO 1: Descuentos
-      console.log(`Step 1: Borrando ${cuenta.descuentos_aplicados.length} descuentos...`);
-      await tx.descuentos_aplicados.deleteMany({
-        where: { cuenta_id: cuenta.id },
-      });
-
-      // PASO 2: Beneficios Pendientes
-      if (restaurarBeneficios && cuenta.descuentos_aplicados.length > 0) {
-        for (const desc of cuenta.descuentos_aplicados) {
-          await tx.beneficios_pendientes.updateMany({
-            where: {
-              alumno_id: cuenta.alumno_id,
-              tipo_beneficio_id: desc.tipo_beneficio_id,
-              usado: true,
-            },
-            data: { usado: false },
-          });
-        }
-      }
-
-      // PASO 3: Pagos
-      await tx.pagos.deleteMany({ where: { cuenta_id: cuenta.id } });
-
-      // PASO 4: Borrado final
-      const resultado = await tx.cuentas_por_cobrar.delete({
-        where: { id: cuenta.id },
-      });
-
-      console.log(`🚀 [SUCCESS] Cuenta ${id} eliminada.`);
-      return resultado;
+    const cuenta = await tx.cuentas_por_cobrar.findUnique({
+      where: { id: parseInt(id) },
+      include: { descuentos_aplicados: true, pagos: true },
     });
+
+    if (!cuenta) {
+      console.log(`⚠️ [DEBUG] La cuenta ${id} ya no existe.`);
+      return;
+    }
+
+    // 🔥 PASO 0: LIMPIAR EL PUENTE (Integridad Referencial)
+    console.log(`Step 0: Borrando vínculos en inscripciones_deudas_link...`);
+    await tx.inscripciones_deudas_link.deleteMany({
+      where: { cuenta_id: cuenta.id },
+    });
+
+    // PASO 1: Descuentos
+    console.log(`Step 1: Borrando ${cuenta.descuentos_aplicados.length} descuentos...`);
+    await tx.descuentos_aplicados.deleteMany({
+      where: { cuenta_id: cuenta.id },
+    });
+
+    // PASO 2: Beneficios Pendientes
+    if (restaurarBeneficios && cuenta.descuentos_aplicados.length > 0) {
+      for (const desc of cuenta.descuentos_aplicados) {
+        await tx.beneficios_pendientes.updateMany({
+          where: {
+            alumno_id: cuenta.alumno_id,
+            tipo_beneficio_id: desc.tipo_beneficio_id,
+            usado: true,
+          },
+          data: { usado: false },
+        });
+      }
+    }
+
+    // PASO 3: Pagos
+    await tx.pagos.deleteMany({ where: { cuenta_id: cuenta.id } });
+
+    // PASO 4: Borrado final
+    const resultado = await tx.cuentas_por_cobrar.delete({
+      where: { id: cuenta.id },
+    });
+
+    console.log(`🚀 [SUCCESS] Cuenta ${id} eliminada.`);
+    return resultado;
   },
 
   async obtenerPorId(id) {
@@ -185,8 +183,8 @@ export const CuentasPorCobrarService = {
     return cuenta;
   },
 
-  async actualizar(id, data) {
-    return await prisma.cuentas_por_cobrar.update({
+  async actualizar(tx, id, data) {
+    return await tx.cuentas_por_cobrar.update({
       where: { id: parseInt(id) },
       data: {
         alumno_id: data.alumno_id ? parseInt(data.alumno_id) : undefined,
@@ -236,13 +234,6 @@ export const CuentasPorCobrarService = {
       console.error("Error en obtenerTodoPorAlumno Service:", error);
       throw error;
     }
-  },
-
-  // eslint-disable-next-line no-dupe-keys
-  async eliminar(id) {
-    return await prisma.cuentas_por_cobrar.delete({
-      where: { id: parseInt(id) },
-    });
   },
 
   // 1. CEREBRO DE FECHAS: Busca la clase más lejana de todo el paquete
