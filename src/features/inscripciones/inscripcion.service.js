@@ -467,42 +467,25 @@ export const inscripcionService = {
       };
     });
   },
-  // Nuevo método específico para tu flujo
+
   separarFinalizarVoluntaria: async (id) => {
     return await prisma.$transaction(async (tx) => {
       const inscripcionId = Number(id);
 
-      // 1. Verificamos existencia
       const inscripcion = await tx.inscripciones.findUnique({
         where: { id: inscripcionId }
       });
 
       if (!inscripcion) throw new Error('Inscripción no encontrada');
 
-      // 2. Lógica de recuperaciones para el estado
-      const tieneRecuperaciones = await tx.recuperaciones.findFirst({
-        where: {
-          alumno_id: inscripcion.alumno_id,
-          estado: { in: ['PENDIENTE', 'PROGRAMADA'] }
-        }
-      });
-
-      const nuevoEstado = tieneRecuperaciones ? 'PEN-RECU' : 'FINALIZADO';
-
-      console.log(`🚀 [BACKEND] Desvinculando ID ${inscripcionId} del grupo ${inscripcion.id_grupo_transaccion}`);
-
-      // 3. ACTUALIZACIÓN FORZADA
       const actualizada = await tx.inscripciones.update({
         where: { id: inscripcionId },
         data: {
-          estado: nuevoEstado,
-          // IMPORTANTE: Asegúrate de que en tu schema.prisma este campo permita null
+          estado: 'FINALIZADO',
           id_grupo_transaccion: null,
           actualizado_en: new Date()
         }
       });
-
-      console.log(`✅ [DB SUCCESS] Ahora id_grupo_transaccion es: ${actualizada.id_grupo_transaccion}`);
 
       return {
         success: true,
@@ -673,6 +656,7 @@ export const inscripcionService = {
         where: { alumno_id: insc.alumno_id, id: insc.id },
         data: {
           estado: 'FINALIZADO',
+          id_grupo_transaccion: null,
           actualizado_en: new Date()
         },
       })
@@ -683,7 +667,7 @@ export const inscripcionService = {
           horario_id: horarioId,
           fecha_inscripcion: insc.fecha_inscripcion_original, //Para asegurar que se reinicie la fecha de inscripción con la original (PARA CASOS AISLADOS DE REPROGRAMACIÓN MASIVA)
           fecha_inscripcion_original: insc.fecha_inscripcion_original,
-          estado: 'ACTIVO',
+          estado: insc.estado,
           actualizado_en: new Date(),
           creado_en: insc.creado_en,
           id_grupo_transaccion: insc.id_grupo_transaccion,
@@ -701,28 +685,37 @@ export const inscripcionService = {
         }
       })
 
-      await asistenciaService.generarClasesFuturas(tx, {
-        inscripcion_id: createdInsc.id,
-        dia_semana: createdInsc.horarios_clases.dia_semana,
-        usuario_admin_id: Number.parseInt(adminId),
-        coordinador_id: createdInsc.horarios_clases.coordinador_id,
-        fecha_inicio: createdInsc.fecha_inscripcion,
-      })
-
-      const hoy = new Date()
-      hoy.setHours(12, 0, 0, 0)
-      await tx.registros_asistencia.updateMany({
+      await tx.inscripciones_deudas_link.deleteMany({
         where: {
-          inscripcion_id: createdInsc.id,
-          fecha: {
-            gte: createdInsc.fecha_inscripcion,
-            lt: hoy
-          }
-        },
-        data: {
-          estado: 'PRESENTE'
+          inscripcion_id: insc.id,
+          cuenta_id: insc.inscripciones_deudas_link[0].cuenta_id,
         }
       })
+
+      if (createdInsc.estado === 'ACTIVO') {
+        await asistenciaService.generarClasesFuturas(tx, {
+          inscripcion_id: createdInsc.id,
+          dia_semana: createdInsc.horarios_clases.dia_semana,
+          usuario_admin_id: Number.parseInt(adminId),
+          coordinador_id: createdInsc.horarios_clases.coordinador_id,
+          fecha_inicio: createdInsc.fecha_inscripcion,
+        })
+
+        const hoy = new Date()
+        hoy.setHours(12, 0, 0, 0)
+        await tx.registros_asistencia.updateMany({
+          where: {
+            inscripcion_id: createdInsc.id,
+            fecha: {
+              gte: createdInsc.fecha_inscripcion,
+              lt: hoy
+            }
+          },
+          data: {
+            estado: 'PRESENTE'
+          }
+        })
+      }
 
       await tx.notificaciones.create({
         data: {

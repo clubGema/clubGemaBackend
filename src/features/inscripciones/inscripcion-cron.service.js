@@ -13,126 +13,103 @@ dayjs.extend(timezone);
 const TZ_LIMA = 'America/Lima';
 
 class InscripcionCronService {
-async limpiarReservasZombies() {
-  const param = await prisma.parametros_sistema.findUnique({
-    where: { clave: 'TIEMPO_LIMITE_RESERVA_MIN' },
-  });
-  const minutosLimite = param ? Number.parseInt(param.valor) : 20;
-  const horaCorte = new Date(Date.now() - minutosLimite * 60 * 1000);
+  async limpiarReservasZombies() {
+    const param = await prisma.parametros_sistema.findUnique({
+      where: { clave: 'TIEMPO_LIMITE_RESERVA_MIN' },
+    });
+    const minutosLimite = param ? Number.parseInt(param.valor) : 20;
+    const horaCorte = new Date(Date.now() - minutosLimite * 60 * 1000);
 
-  // 1. Buscamos las inscripciones zombies
-  const zombies = await prisma.inscripciones.findMany({
-    where: {
-      estado: 'PENDIENTE_PAGO',
-      creado_en: { lt: horaCorte },
-    },
-    include: {
-      inscripciones_deudas_link: true // Traemos el link para saber qué cuenta borrar
-    }
-  });
-
-  if (zombies.length === 0) return;
-
-  for (const zombie of zombies) {
-    try {
-      await prisma.$transaction(async (tx) => {
-        
-        // 2. Si tiene un link al puente, hay que limpiar las dependencias de la cuenta
-        if (zombie.inscripciones_deudas_link.length > 0) {
-          const cuentaId = zombie.inscripciones_deudas_link[0].cuenta_id;
-
-          // PASO A: Borrar los links en el PUENTE (Esto evita el error que tuviste)
-          await tx.inscripciones_deudas_link.deleteMany({
-            where: { cuenta_id: cuentaId }
-          });
-
-          // PASO B: Borrar descuentos si existen
-          await tx.descuentos_aplicados.deleteMany({
-            where: { cuenta_id: cuentaId }
-          });
-
-          // PASO C: Borrar la CUENTA
-          await tx.cuentas_por_cobrar.delete({
-            where: { id: cuentaId }
-          });
-        }
-
-        // 3. PASO FINAL: Borrar la INSCRIPCIÓN (El zombie)
-        await tx.inscripciones.delete({
-          where: { id: zombie.id }
-        });
-
-      });
-      logger.info(`[FRANCOTIRADOR] Zombie ${zombie.id} liquidado con éxito.`);
-    } catch (error) {
-      logger.error(`[ERROR FRANCOTIRADOR] ID ${zombie.id}: ${error.message}`);
-    }
-  }
-}
-
-async gestionarVencimientos() {
-  // Aseguramos que "hoy" empiece a las 00:00 en la zona horaria de Perú
-  const hoyLima = dayjs().tz('America/Lima').startOf('day');
-  logger.info(`[VERDUGO] Iniciando revisión de ciclos. Hoy: ${hoyLima.format('YYYY-MM-DD')}`);
-
-  try {
-    // Ya no consultamos parametros_sistema. Vamos directo por las inscripciones activas.
-    const inscripcionesActivas = await prisma.inscripciones.findMany({
-      where: { estado: 'ACTIVO' }
+    // 1. Buscamos las inscripciones zombies
+    const zombies = await prisma.inscripciones.findMany({
+      where: {
+        estado: 'PENDIENTE_PAGO',
+        creado_en: { lt: horaCorte },
+      },
+      include: {
+        inscripciones_deudas_link: true // Traemos el link para saber qué cuenta borrar
+      }
     });
 
-    let totalFinalizados = 0;
+    if (zombies.length === 0) return;
 
-    for (const insc of inscripcionesActivas) {
+    for (const zombie of zombies) {
       try {
-        // 🛡️ Escudo de Lesiones
-        const lesionActiva = await prisma.solicitudes_lesion.findFirst({
-          where: { alumno_id: insc.alumno_id, estado: 'ACTIVA' }
+        await prisma.$transaction(async (tx) => {
+
+          // 2. Si tiene un link al puente, hay que limpiar las dependencias de la cuenta
+          if (zombie.inscripciones_deudas_link.length > 0) {
+            const cuentaId = zombie.inscripciones_deudas_link[0].cuenta_id;
+
+            // PASO A: Borrar los links en el PUENTE (Esto evita el error que tuviste)
+            await tx.inscripciones_deudas_link.deleteMany({
+              where: { cuenta_id: cuentaId }
+            });
+
+            // PASO B: Borrar descuentos si existen
+            await tx.descuentos_aplicados.deleteMany({
+              where: { cuenta_id: cuentaId }
+            });
+
+            // PASO C: Borrar la CUENTA
+            await tx.cuentas_por_cobrar.delete({
+              where: { id: cuentaId }
+            });
+          }
+
+          // 3. PASO FINAL: Borrar la INSCRIPCIÓN (El zombie)
+          await tx.inscripciones.delete({
+            where: { id: zombie.id }
+          });
+
         });
-
-        if (lesionActiva) continue;
-
-        // Convertimos la fecha de inscripción a la zona horaria de Lima y la seteamos al inicio del día
-        const fechaInicio = dayjs(insc.fecha_inscripcion).tz('America/Lima').startOf('day');
-        
-        // Calculamos la diferencia exacta en días
-        const diasTranscurridos = hoyLima.diff(fechaInicio, 'day');
-
-        // 💀 Ejecución: Si pasaron 30 días exactos o más (Ej: del 1 de mayo al 31 de mayo hay 30 días)
-        if (diasTranscurridos >= 30) {
-          
-          const tieneRecuperaciones = await prisma.recuperaciones.findFirst({
-            where: {
-              alumno_id: insc.alumno_id,
-              estado: { in: ['PENDIENTE', 'PROGRAMADA'] },
-            },
-          });
-
-          const nuevoEstado = tieneRecuperaciones ? 'PEN-RECU' : 'FINALIZADO';
-
-          // 📝 ACTUALIZACIÓN FÍSICA
-          await prisma.inscripciones.update({
-            where: { id: insc.id },
-            data: { 
-              estado: nuevoEstado, 
-              id_grupo_transaccion: null, // Limpiamos el ID de grupo
-              actualizado_en: new Date() 
-            }
-          });
-
-          totalFinalizados++;
-          logger.info(`[VERDUGO] ✅ Slot ${insc.id} liquidado (Días transcurridos: ${diasTranscurridos}) y desvinculado de grupo.`);
-        }
-      } catch (innerError) {
-        logger.error(`[VERDUGO ERROR] ID ${insc.id}: ${innerError.message}`);
+        logger.info(`[FRANCOTIRADOR] Zombie ${zombie.id} liquidado con éxito.`);
+      } catch (error) {
+        logger.error(`[ERROR FRANCOTIRADOR] ID ${zombie.id}: ${error.message}`);
       }
     }
-
-    logger.info(`[VERDUGO] Proceso terminado. Total cerrados: ${totalFinalizados}`);
-  } catch (error) {
-    logger.error(`[VERDUGO CRÍTICO]: ${error.message}`);
   }
-}
+
+  async gestionarVencimientos() {
+    const hoyLima = dayjs().tz('America/Lima').startOf('day');
+    logger.info(`[VERDUGO] Iniciando revisión de ciclos. Hoy: ${hoyLima.format('YYYY-MM-DD')}`);
+
+    try {
+      const inscripcionesActivas = await prisma.inscripciones.findMany({
+        where: { estado: 'ACTIVO' }
+      });
+
+      let totalFinalizados = 0;
+
+      for (const insc of inscripcionesActivas) {
+        try {
+          const fechaInicio = dayjs(insc.fecha_inscripcion).tz('America/Lima').startOf('day');
+
+          const diasTranscurridos = hoyLima.diff(fechaInicio, 'day');
+
+          if (diasTranscurridos >= 30) {
+            await prisma.inscripciones.update({
+              where: { id: insc.id },
+              data: {
+                estado: 'FINALIZADO',
+                id_grupo_transaccion: null, // Limpiamos el ID de grupo
+                actualizado_en: new Date()
+              }
+            });
+
+            totalFinalizados++;
+            logger.info(`[VERDUGO] ✅ Slot ${insc.id} liquidado (Días transcurridos: ${diasTranscurridos}) y desvinculado de grupo.`);
+          }
+        } catch (innerError) {
+          logger.error(`[VERDUGO ERROR] ID ${insc.id}: ${innerError.message}`);
+        }
+      }
+
+      logger.info(`[VERDUGO] Proceso terminado. Total cerrados: ${totalFinalizados}`);
+    } catch (error) {
+      logger.error(`[VERDUGO CRÍTICO]: ${error.message}`);
+    }
+  }
 
   async cambiarEstado() {
     const dia0 = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000);
