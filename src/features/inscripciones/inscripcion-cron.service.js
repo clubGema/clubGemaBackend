@@ -93,7 +93,12 @@ class InscripcionCronService {
               data: {
                 estado: 'FINALIZADO',
                 id_grupo_transaccion: null, // Limpiamos el ID de grupo
-                actualizado_en: new Date()
+                actualizado_en: new Date(),
+                alumnos: {
+                  update: {
+                    historial: 'Nuevo',
+                  }
+                }
               }
             });
 

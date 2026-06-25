@@ -1,6 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import dayjs from 'dayjs';
 import crypto from 'crypto';
+import { detectarRegimenAlumno } from '../inscripciones/logic/inscripcion.logic.js';
 
 const prisma = new PrismaClient();
 
@@ -301,8 +302,9 @@ export const CuentasPorCobrarService = {
 
       if (paqueteActual.length === 0) throw new Error("No hay horarios activos.");
 
+      const esLegacy = await detectarRegimenAlumno(tx, paqueteActual[0].alumno_id)
       const conceptoPaquete = await tx.catalogo_conceptos.findFirst({
-        where: { cantidad_clases_semanal: paqueteActual.length, activo: true }
+        where: { cantidad_clases_semanal: paqueteActual.length, activo: true, es_vigente: !esLegacy }
       });
 
       const montoTotal = Number(conceptoPaquete.precio_base);
