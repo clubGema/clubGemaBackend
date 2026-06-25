@@ -8,16 +8,17 @@ datasource db {
 }
 
 model administrador {
-  usuario_id           Int                    @id
-  sede_id              Int?
-  cargo                String                 @db.VarChar(100)
-  area                 String?                @db.VarChar(100)
-  sedes                sedes?                 @relation(fields: [sede_id], references: [id], onDelete: SetNull)
-  usuarios             usuarios               @relation(fields: [usuario_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  descuentos_aplicados descuentos_aplicados[]
-  pagos                pagos[]
-  solicitudes_lesion   solicitudes_lesion[]
-  publicaciones        publicaciones[]
+  usuario_id              Int                       @id
+  sede_id                 Int?
+  cargo                   String                    @db.VarChar(100)
+  area                    String?                   @db.VarChar(100)
+  sedes                   sedes?                    @relation(fields: [sede_id], references: [id], onDelete: SetNull)
+  usuarios                usuarios                  @relation(fields: [usuario_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  descuentos_aplicados    descuentos_aplicados[]
+  pagos                   pagos[]
+  solicitudes_lesion      solicitudes_lesion[]
+  publicaciones           publicaciones[]
+  movimientos_financieros movimientos_financieros[]
 }
 
 model alumnos {
@@ -47,7 +48,6 @@ model alumnos_contactos {
   es_principal    Boolean? @default(false)
   alumnos         alumnos  @relation(fields: [alumno_id], references: [usuario_id], onDelete: NoAction, onUpdate: NoAction)
 }
-
 
 model canchas {
   id              Int               @id @default(autoincrement())
@@ -92,19 +92,19 @@ model credenciales_usuario {
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model cuentas_por_cobrar {
-  id                   Int                    @id @default(autoincrement())
-  alumno_id            Int
-  concepto_id          Int?
-  detalle_adicional    String?                @db.Text
-  monto_final          Decimal                @db.Decimal(10, 2)
-  fecha_vencimiento    DateTime               @db.Date
-  estado               String?                @default("PENDIENTE") @db.VarChar(20)
-  creado_en            DateTime?              @default(now()) @db.Timestamp(6)
-  actualizado_en       DateTime?              @default(now()) @db.Timestamp(6)
-  alumnos              alumnos                @relation(fields: [alumno_id], references: [usuario_id], onDelete: NoAction, onUpdate: NoAction)
-  catalogo_conceptos   catalogo_conceptos?    @relation(fields: [concepto_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  descuentos_aplicados descuentos_aplicados[]
-  pagos                pagos[]
+  id                        Int                         @id @default(autoincrement())
+  alumno_id                 Int
+  concepto_id               Int?
+  detalle_adicional         String?                     @db.Text
+  monto_final               Decimal                     @db.Decimal(10, 2)
+  fecha_vencimiento         DateTime                    @db.Date
+  estado                    String?                     @default("PENDIENTE") @db.VarChar(20)
+  creado_en                 DateTime?                   @default(now()) @db.Timestamp(6)
+  actualizado_en            DateTime?                   @default(now()) @db.Timestamp(6)
+  alumnos                   alumnos                     @relation(fields: [alumno_id], references: [usuario_id], onDelete: NoAction, onUpdate: NoAction)
+  catalogo_conceptos        catalogo_conceptos?         @relation(fields: [concepto_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  descuentos_aplicados      descuentos_aplicados[]
+  pagos                     pagos[]
   inscripciones_deudas_link inscripciones_deudas_link[]
 }
 
@@ -143,29 +143,52 @@ model horarios_clases {
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model inscripciones {
-  id                            Int                    @id @default(autoincrement())
-  alumno_id                     Int
-  horario_id                    Int
-  fecha_inscripcion             DateTime               @default(now()) @db.Timestamp(6)
-  fecha_inscripcion_original    DateTime?              @default(now()) @db.Timestamp(6)
-  estado                        String?                @default("PENDIENTE_PAGO") @db.VarChar(20)
-  actualizado_en                DateTime?              @default(now()) @db.Timestamp(6)
-  congelamientos                congelamientos[]
-  creado_en                     DateTime?              @default(now()) @db.Timestamp(6)
-  alumnos                       alumnos                @relation(fields: [alumno_id], references: [usuario_id], onDelete: NoAction, onUpdate: NoAction)
-  horarios_clases               horarios_clases        @relation(fields: [horario_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  registros_asistencia          registros_asistencia[]
-  id_grupo_transaccion       String?                @db.Uuid
-  inscripciones_deudas_link  inscripciones_deudas_link[]
+  id                         Int       @id @default(autoincrement())
+  alumno_id                  Int
+  horario_id                 Int
+  fecha_inscripcion          DateTime  @default(now()) @db.Timestamp(6)
+  fecha_inscripcion_original DateTime? @default(now()) @db.Timestamp(6)
+  estado                     String?   @default("PENDIENTE_PAGO") @db.VarChar(20)
+
+  // NUEVOS CAMPOS PARA CLASES SUELTAS
+  tipo_inscripcion   String?   @default("REGULAR") @db.VarChar(20) // 'REGULAR' o 'CLASE_SUELTA'
+  fecha_clase_suelta DateTime? @db.Date // Se llena solo si es CLASE_SUELTA
+
+  actualizado_en       DateTime? @default(now()) @db.Timestamp(6)
+  creado_en            DateTime? @default(now()) @db.Timestamp(6)
+  id_grupo_transaccion String?   @db.Uuid
+
+  // Relaciones existentes...
+  alumnos                   alumnos                     @relation(fields: [alumno_id], references: [usuario_id], onDelete: NoAction, onUpdate: NoAction)
+  horarios_clases           horarios_clases             @relation(fields: [horario_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  congelamientos            congelamientos[]
+  registros_asistencia      registros_asistencia[]
+  inscripciones_deudas_link inscripciones_deudas_link[]
+}
+
+model movimientos_financieros {
+  id               Int      @id @default(autoincrement())
+  tipo_movimiento  String   @db.VarChar(10) // 'INGRESO' o 'EGRESO'
+  monto            Decimal  @db.Decimal(10, 2)
+  concepto         String   @db.VarChar(150) // Ej: "Venta de camiseta", "Pago de luz"
+  metodo_pago_id   Int?
+  fecha_movimiento DateTime @default(now()) @db.Timestamp(6)
+  comprobante_url  String?  @db.VarChar(255)
+  registrado_por   Int? // ID del administrador que registra el movimiento
+  notas            String?  @db.Text
+
+  // Relaciones
+  metodos_pago  metodos_pago?  @relation(fields: [metodo_pago_id], references: [id], onDelete: SetNull)
+  administrador administrador? @relation(fields: [registrado_por], references: [usuario_id], onDelete: SetNull)
 }
 
 model inscripciones_deudas_link {
-  id              Int                @id @default(autoincrement())
-  inscripcion_id  Int
-  cuenta_id       Int
-  monto_asignado  Decimal            @db.Decimal(10, 2)
-  creado_en       DateTime           @default(now()) @db.Timestamp(6)
-  inscripciones   inscripciones      @relation(fields: [inscripcion_id], references: [id], onDelete: Cascade)
+  id                 Int                @id @default(autoincrement())
+  inscripcion_id     Int
+  cuenta_id          Int
+  monto_asignado     Decimal            @db.Decimal(10, 2)
+  creado_en          DateTime           @default(now()) @db.Timestamp(6)
+  inscripciones      inscripciones      @relation(fields: [inscripcion_id], references: [id], onDelete: Cascade)
   cuentas_por_cobrar cuentas_por_cobrar @relation(fields: [cuenta_id], references: [id], onDelete: Cascade)
 
   @@index([inscripcion_id])
@@ -173,10 +196,11 @@ model inscripciones_deudas_link {
 }
 
 model metodos_pago {
-  id     Int      @id @default(autoincrement())
-  nombre String   @unique @db.VarChar(50)
-  activo Boolean? @default(true)
-  pagos  pagos[]
+  id                      Int                       @id @default(autoincrement())
+  nombre                  String                    @unique @db.VarChar(50)
+  activo                  Boolean?                  @default(true)
+  pagos                   pagos[]
+  movimientos_financieros movimientos_financieros[]
 }
 
 model niveles_entrenamiento {
@@ -204,10 +228,10 @@ model pagos {
 }
 
 model coordinadores {
-  usuario_id           Int                  @id
-  especializacion      String?              @db.VarChar(100)
+  usuario_id           Int                    @id
+  especializacion      String?                @db.VarChar(100)
   horarios_clases      horarios_clases[]
-  usuarios             usuarios             @relation(fields: [usuario_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  usuarios             usuarios               @relation(fields: [usuario_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   registros_asistencia registros_asistencia[]
 }
 
@@ -311,29 +335,29 @@ model tipos_documento {
 }
 
 model usuarios {
-  id                   Int                   @id @default(autoincrement())
-  rol_id               Int
-  username             String                @unique @db.VarChar(50)
-  tipo_documento_id    String?               @db.VarChar(10)
-  numero_documento     String?               @db.VarChar(20)
-  nombres              String                @db.VarChar(100)
-  apellidos            String                @db.VarChar(100)
-  email                String?               @db.VarChar(150)
-  telefono_personal    String?               @db.VarChar(20)
-  fecha_nacimiento     DateTime?             @db.Date
-  genero               String?               @db.Char(1)
-  activo               Boolean?              @default(true)
-  creado_en            DateTime?             @default(now()) @db.Timestamp(6)
-  actualizado_en       DateTime?             @default(now()) @db.Timestamp(6)
-  administrador        administrador?
-  alumnos              alumnos?
-  credenciales_usuario credenciales_usuario?
-  coordinadores        coordinadores?
+  id                      Int                       @id @default(autoincrement())
+  rol_id                  Int
+  username                String                    @unique @db.VarChar(50)
+  tipo_documento_id       String?                   @db.VarChar(10)
+  numero_documento        String?                   @db.VarChar(20)
+  nombres                 String                    @db.VarChar(100)
+  apellidos               String                    @db.VarChar(100)
+  email                   String?                   @db.VarChar(150)
+  telefono_personal       String?                   @db.VarChar(20)
+  fecha_nacimiento        DateTime?                 @db.Date
+  genero                  String?                   @db.Char(1)
+  activo                  Boolean?                  @default(true)
+  creado_en               DateTime?                 @default(now()) @db.Timestamp(6)
+  actualizado_en          DateTime?                 @default(now()) @db.Timestamp(6)
+  administrador           administrador?
+  alumnos                 alumnos?
+  credenciales_usuario    credenciales_usuario?
+  coordinadores           coordinadores?
   refresh_tokens          refresh_tokens[]
   notificaciones          notificaciones[]
   reprogramaciones_clases reprogramaciones_clases[]
-  roles                roles                 @relation(fields: [rol_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  tipos_documento      tipos_documento?      @relation(fields: [tipo_documento_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  roles                   roles                     @relation(fields: [rol_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  tipos_documento         tipos_documento?          @relation(fields: [tipo_documento_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@unique([tipo_documento_id, numero_documento], map: "uq_documento")
 }
@@ -439,16 +463,17 @@ model feriados {
   descripcion String   @db.VarChar(100)
   activo      Boolean  @default(true)
 }
+
 model anuncios_beneficios {
-  id          Int       @id @default(autoincrement())
-  tipo        String    @db.VarChar(50) // Ej: 'RECUPERACIÓN', 'REFERIDOS'
-  titulo      String    @db.VarChar(100) // Ej: 'Trae a un amigo: -S/ 30'
-  descripcion String    @db.VarChar(255)
-  icono       String    @default("Gift") @db.VarChar(50) // Guardaremos el nombre del icono: 'RefreshCcw', 'Users', etc.
-  gradiente   String    @default("from-[#1e3a8a] to-blue-600") @db.VarChar(100)
-  badge       String    @db.VarChar(50) // Ej: 'FLEXIBILIDAD', 'PROMO'
-  activo      Boolean   @default(true)
-  orden       Int       @default(0) // Para ordenar el carrusel
-  creado_en   DateTime? @default(now()) @db.Timestamp(6)
+  id             Int       @id @default(autoincrement())
+  tipo           String    @db.VarChar(50) // Ej: 'RECUPERACIÓN', 'REFERIDOS'
+  titulo         String    @db.VarChar(100) // Ej: 'Trae a un amigo: -S/ 30'
+  descripcion    String    @db.VarChar(255)
+  icono          String    @default("Gift") @db.VarChar(50) // Guardaremos el nombre del icono: 'RefreshCcw', 'Users', etc.
+  gradiente      String    @default("from-[#1e3a8a] to-blue-600") @db.VarChar(100)
+  badge          String    @db.VarChar(50) // Ej: 'FLEXIBILIDAD', 'PROMO'
+  activo         Boolean   @default(true)
+  orden          Int       @default(0) // Para ordenar el carrusel
+  creado_en      DateTime? @default(now()) @db.Timestamp(6)
   actualizado_en DateTime? @default(now()) @updatedAt @db.Timestamp(6)
 }

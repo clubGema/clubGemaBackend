@@ -36,6 +36,7 @@ import notificacionesRoutes from './features/notificaciones/notificaciones.route
 import metodosPago from './features/metodosPago/metodo_pago.routes.js';
 import coordinadorRoutes from './features/cordinador/coordinador.routes.js';
 import feriadoRoutes from './features/feriados/feriado.routes.js';
+import cajaRoutes from './features/movimientos_financieros/movimientos-financieros.route.js';
 
 import anunciosBeneficio from './features/anunciosBeneficios/anunciosBeneficios.routes.js';
 
@@ -116,6 +117,7 @@ app.use('/api/metodos-pago', metodosPago);
 app.use('/api/coordinadores', coordinadorRoutes);
 app.use('/api/feriados', feriadoRoutes);
 app.use('/api/anuncios-beneficios',anunciosBeneficio)
+app.use('/api/caja', cajaRoutes);
 
 app.use(errorHandler);
 
