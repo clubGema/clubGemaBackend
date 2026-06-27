@@ -98,7 +98,7 @@ export const sedeService = {
             nombre: sedeData.nombre,
             telefono_contacto: sedeData.telefono_contacto || null,
             tipo_instalacion: sedeData.tipo_instalacion || null,
-            activo: true,
+            activo: sedeData.activo ?? true,
             direccion_id: nuevaDireccion.id,
             administrador: {
               connect: { usuario_id: adminRelacion.usuario_id },

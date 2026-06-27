@@ -1,3 +1,4 @@
+import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import { prisma } from '../../config/database.config.js';
 import { ApiError } from '../../shared/utils/error.util.js';
 import { alumnoLogic } from './logic/alumno.logic.js';
@@ -109,7 +110,7 @@ export const alumnoService = {
       where: {
         inscripciones: {
           some: {
-            estado: { in: ['ACTIVO', 'FINALIZADO', 'PEN-RECU'] },
+            estado: { in: ['ACTIVO', 'FINALIZADO'] },
             horarios_clases: { coordinador_id: coordinadorId }
           }
         }
@@ -120,7 +121,7 @@ export const alumnoService = {
         },
         inscripciones: {
           where: {
-            estado: { in: ['ACTIVO', 'FINALIZADO', 'PEN-RECU'] },
+            estado: { in: ['ACTIVO', 'FINALIZADO'] },
             horarios_clases: { coordinador_id: coordinadorId }
           },
           include: {
@@ -164,4 +165,20 @@ export const alumnoService = {
       };
     });
   },
+
+  cambiarHistorialAlumno: async (alumnoId, estado) => {
+    try {
+      const estadosPermitidos = ['Antiguo', 'Nuevo'];
+      if (!estadosPermitidos.includes(estado)) throw new ApiError('Estado de historial no permitido.')
+      await prisma.alumnos.update({
+        where: { usuario_id: alumnoId },
+        data: { historial: estado }
+      })
+    } catch (e) {
+      if (e instanceof PrismaClientKnownRequestError) {
+        throw new ApiError(e.message, 400, { prismaCode: e.code, meta: e.meta })
+      }
+      throw new ApiError(e instanceof Error ? e.message : 'Error Interno', 500)
+    }
+  }
 };

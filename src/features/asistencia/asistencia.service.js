@@ -112,30 +112,6 @@ export const asistenciaService = {
     return datosAsistencia.length;
   },
 
-
-  // NO SE USA
-  // marcarAsistencia: async (asistenciaId, estado, comentario) => {
-  //   const asistenciaRegistrada = await prisma.registros_asistencia.update({
-  //     where: { id: asistenciaId },
-  //     data: {
-  //       estado,
-  //       comentario,
-  //       actualizado_en: new Date()
-  //     },
-  //     include: {
-  //       inscripciones: true
-  //     }
-  //   });
-
-  //   // Crea un registro en la tabla recuperaciones con estado PENDIENTE en caso la asistencia sea registrada como FALTA.
-  //   if (asistenciaRegistrada.estado === "FALTA") {
-  //     const idAlumnoInscripcion = asistenciaRegistrada.inscripciones.alumno_id;
-  //     await recuperacionService.registrarFaltaPendiente(idAlumnoInscripcion, asistenciaRegistrada.fecha)
-  //   }
-
-  //   return asistenciaRegistrada
-  // },
-
   obtenerHistorial: async (inscripcionId) => {
     return await prisma.registros_asistencia.findMany({
       where: { inscripcion_id: parseInt(inscripcionId) },
@@ -231,7 +207,7 @@ export const asistenciaService = {
         niveles_entrenamiento: true,
         canchas: { include: { sedes: true } },
         inscripciones: {
-          where: { estado: { in: ['ACTIVO', 'PEN-RECU'] } },
+          where: { estado: { in: ['ACTIVO'] } },
           include: {
             alumnos: {
               include: {
@@ -296,7 +272,7 @@ export const asistenciaService = {
         niveles_entrenamiento: true,
         canchas: { include: { sedes: true } },
         inscripciones: {
-          where: { estado: { in: ['ACTIVO', 'PEN-RECU', 'FINALIZADO'] } },
+          where: { estado: { in: ['ACTIVO', 'FINALIZADO'] } },
           include: {
             alumnos: {
               include: {
@@ -537,7 +513,7 @@ export const asistenciaService = {
           }
 
           const inscActiva = await tx.inscripciones.findFirst({
-            where: { alumno_id: recu.alumno_id, estado: { in: ['ACTIVO', 'PEN-RECU'] } },
+            where: { alumno_id: recu.alumno_id, estado: { in: ['ACTIVO'] } },
           });
 
           if (inscActiva) {

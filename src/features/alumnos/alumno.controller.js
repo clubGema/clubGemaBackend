@@ -11,37 +11,42 @@ export const alumnoController = {
     });
   }),
   obtenerMiPerfil: catchAsync(async (req, res) => {
-  const perfil = await alumnoService.obtenerMiPerfil(req.user.id);
-  return apiResponse.success(res, {
-    message: 'Perfil cargado',
-    data: perfil,
-  });
-}),
+    const perfil = await alumnoService.obtenerMiPerfil(req.user.id);
+    return apiResponse.success(res, {
+      message: 'Perfil cargado',
+      data: perfil,
+    });
+  }),
 
-listarAlumnosResumen: catchAsync(async (req, res) => {
+  listarAlumnosResumen: catchAsync(async (req, res) => {
     const data = await alumnoService.listarAlumnosResumen();
     return apiResponse.success(res, {
       message: 'Lista de alumnos para gestión de cortes cargada',
       data: data,
     });
   }),
-listarAlumnosResumenPorCoordinador: catchAsync(async (req, res) => {
+  listarAlumnosResumenPorCoordinador: catchAsync(async (req, res) => {
     // Extraemos el ID y el Rol del token de sesión
-    const { id: usuarioId, role } = req.user; 
-    
+    const { id: usuarioId, role } = req.user;
+
     let data;
 
     if (role === 'Administrador') {
-        // Si es Admin, llama al service global (sin filtro de ID)
-        data = await alumnoService.listarAlumnosResumen();
+      // Si es Admin, llama al service global (sin filtro de ID)
+      data = await alumnoService.listarAlumnosResumen();
     } else {
-        // Si es Coordinador, pasamos su ID para filtrar sus alumnos
-        data = await alumnoService.listarAlumnosResumenPorCoordinador(usuarioId);
+      // Si es Coordinador, pasamos su ID para filtrar sus alumnos
+      data = await alumnoService.listarAlumnosResumenPorCoordinador(usuarioId);
     }
 
     return apiResponse.success(res, {
-        message: 'Resumen de cortes para gestión de alumnos cargado con éxito',
-        data: data,
+      message: 'Resumen de cortes para gestión de alumnos cargado con éxito',
+      data: data,
     });
-}),
+  }),
+  cambiarHistorialAlumno: catchAsync(async (req, res) => {
+    const { estado, alumnoId } = req.body;
+    await alumnoService.cambiarHistorialAlumno(alumnoId, estado);
+    return apiResponse.success(res, { message: `Historial deportivo cambiado a ${estado}` })
+  })
 };

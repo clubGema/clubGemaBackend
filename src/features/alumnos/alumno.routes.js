@@ -15,15 +15,21 @@ router.get('/mi-perfil', alumnoController.obtenerMiPerfil);
 router.patch('/mi-perfil', validate(actualizarPerfilSchema), alumnoController.actualizarMiPerfil);
 
 router.get(
-    '/gestion/resumen-cortes', 
-    authorize('Administrador', 'Coordinador'), 
+    '/gestion/resumen-cortes',
+    authorize('Administrador', 'Coordinador'),
     alumnoController.listarAlumnosResumen
 );
 
 router.get(
-    '/gestion/cortes-alumnos', // 👈 Nuevo nombre de la ruta
-    authorize('Administrador', 'Coordinador'), 
-    alumnoController.listarAlumnosResumenPorCoordinador 
+    '/gestion/cortes-alumnos',
+    authorize('Administrador', 'Coordinador'),
+    alumnoController.listarAlumnosResumenPorCoordinador
 );
+
+router.post(
+    '/gestion/cambiar-historial',
+    authorize('Administrador'),
+    alumnoController.cambiarHistorialAlumno
+)
 
 export default router;

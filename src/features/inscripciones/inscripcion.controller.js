@@ -29,8 +29,7 @@ export const inscripcionController = {
       if (
         error.message.includes('⛔') ||
         error.message.includes('LÍMITE') ||
-        error.message.includes('deuda') ||
-        error.message.includes('recuperaciones')
+        error.message.includes('deuda')
       ) {
         return res.status(400).json({ // 400 Bad Request para lógica de negocio
           status: 'error',
@@ -192,25 +191,25 @@ export const inscripcionController = {
   },
 
   // inscripcion.controller.js
-cancelarPaquetePorDeuda: async (req, res) => {
-  try {
-    const { cuentaId } = req.params;
+  cancelarPaquetePorDeuda: async (req, res) => {
+    try {
+      const { cuentaId } = req.params;
 
-    // Llamamos al servicio radical que limpia todo usando la tabla puente
-    const resultado = await inscripcionService.eliminarPaqueteCompleto(cuentaId);
+      // Llamamos al servicio radical que limpia todo usando la tabla puente
+      const resultado = await inscripcionService.eliminarPaqueteCompleto(cuentaId);
 
-    res.status(200).json({
-      status: 'success',
-      message: "Reserva eliminada y deuda anulada correctamente",
-      data: resultado
-    });
-  } catch (error) {
-    res.status(400).json({
-      status: 'error',
-      message: error.message
-    });
-  }
-},
+      res.status(200).json({
+        status: 'success',
+        message: "Reserva eliminada y deuda anulada correctamente",
+        data: resultado
+      });
+    } catch (error) {
+      res.status(400).json({
+        status: 'error',
+        message: error.message
+      });
+    }
+  },
 
   updateInscripcion: async (req, res) => {
     try {
@@ -230,20 +229,20 @@ cancelarPaquetePorDeuda: async (req, res) => {
     }
   },
   separarYFinalizar: async (req, res) => {
-  try {
-    const { id } = req.params; // Viene de la URL /1031/separar-finalizar
-    const resultado = await inscripcionService.separarFinalizarVoluntaria(id);
+    try {
+      const { id } = req.params; // Viene de la URL /1031/separar-finalizar
+      const resultado = await inscripcionService.separarFinalizarVoluntaria(id);
 
-    return apiResponse.success(res, {
-      data: resultado,
-      message: resultado.mensaje
-    });
-  } catch (e) {
-    // Si entra aquí, devuelve el 400 o 500
-    console.error("❌ ERROR EN SEPARAR_Y_FINALIZAR:", e.message);
-    return apiResponse.error(res, e.message, e.statusCode || 400);
-  }
-},
+      return apiResponse.success(res, {
+        data: resultado,
+        message: resultado.mensaje
+      });
+    } catch (e) {
+      // Si entra aquí, devuelve el 400 o 500
+      console.error("❌ ERROR EN SEPARAR_Y_FINALIZAR:", e.message);
+      return apiResponse.error(res, e.message, e.statusCode || 400);
+    }
+  },
   // ... dentro de inscripcionController
 
   actualizarFechaInicio: async (req, res) => {
@@ -276,6 +275,6 @@ cancelarPaquetePorDeuda: async (req, res) => {
     }
   },
 
-  
+
 
 };

@@ -8,7 +8,7 @@ const registrarFaltaPendiente = async (tx, alumnoId, fechaFalta, asistenciaId) =
   const cantidadInscripciones = await tx.inscripciones.count({
     where: {
       alumno_id: Number.parseInt(alumnoId),
-      estado: { in: ['ACTIVO', 'PEN-RECU'] },
+      estado: { in: ['ACTIVO'] },
     },
   });
 
@@ -46,7 +46,7 @@ const registrarFaltaPendiente = async (tx, alumnoId, fechaFalta, asistenciaId) =
   const inscripcion = await tx.inscripciones.findFirst({
     where: {
       alumno_id: Number.parseInt(alumnoId),
-      estado: { in: ['ACTIVO', 'PEN-RECU'] },
+      estado: { in: ['ACTIVO'] },
     },
     orderBy: {
       fecha_inscripcion_original: 'asc',
@@ -221,8 +221,7 @@ const obtenerHistorial = async (alumnoId) => {
 const obtenerPendientes = async (alumnoId) => {
   const inscripciones = await prisma.inscripciones.findMany({
     where: {
-      alumno_id: Number.parseInt(alumnoId),
-      estado: { in: ['ACTIVO', 'PEN-RECU'] },
+      alumno_id: Number.parseInt(alumnoId)
     },
     include: {
       horarios_clases: true
@@ -284,9 +283,6 @@ const obtenerPendientes = async (alumnoId) => {
     fechasClasesRegulares.push({ fecha_clase: resultado, id_horario: clase.inscripciones.horarios_clases.id });
   }
 
-  // Buscamos horarios que coincidan con el alumno
-  const horariosRegularesIDs = inscripciones.map(i => i.horario_id).filter(Boolean);
-
   const pendientes = await prisma.recuperaciones.findMany({
     where: {
       alumno_id: Number.parseInt(alumnoId),
@@ -300,7 +296,7 @@ const obtenerPendientes = async (alumnoId) => {
   const cantidadInscripciones = await prisma.inscripciones.count({
     where: {
       alumno_id: Number.parseInt(alumnoId),
-      estado: { in: ['ACTIVO', 'PEN-RECU'] },
+      estado: { in: ['ACTIVO'] },
     },
   });
 
@@ -339,7 +335,6 @@ const obtenerPendientes = async (alumnoId) => {
     stats: {
       recuperacion_usadas: recuperacionesUsadas,
       limite_permitido: limitePermitido,
-      horarios_regulares: horariosRegularesIDs,
       fechas_clases_regulares: fechasClasesRegulares,
     }
   };
@@ -369,10 +364,7 @@ const validarElegibilidad = async (alumnoId, recuperacionId, fechaProgramada, ho
   const inscripciones = await prisma.inscripciones.findMany({
     where: {
       alumno_id: Number.parseInt(alumnoId),
-      estado: { in: ['ACTIVO', 'PEN-RECU'] },
-    },
-    include: {
-      horarios_clases: true,
+      estado: { in: ['ACTIVO'] },
     },
     orderBy: {
       fecha_inscripcion_original: 'asc',
@@ -440,19 +432,6 @@ const validarElegibilidad = async (alumnoId, recuperacionId, fechaProgramada, ho
     return true;
   }
 
-  // ---------------------------------------------------------
-  // 1. VALIDACIÓN DE PLAN (Mínimo 2 veces por semana)
-  // ---------------------------------------------------------
-
-  // Cantidad de clases inscritas < 2
-  if (inscripciones.length < 2) {
-    throw new ApiError('Tu plan actual no incluye el beneficio de recuperaciones.', 403);
-  }
-
-  // ---------------------------------------------------------
-  // 2. VALIDACIÓN DE VIGENCIA (30 días despues de la falta)
-  // ---------------------------------------------------------
-
   const fechaLimiteValida = new Date(faltaPendiente.fecha_falta);
   fechaLimiteValida.setUTCDate(fechaLimiteValida.getUTCDate() + 30);
 
@@ -465,9 +444,13 @@ const validarElegibilidad = async (alumnoId, recuperacionId, fechaProgramada, ho
     throw new ApiError('La vigencia para recuperar esta falta ha expirado o sobrepasa la fecha límite.', 400);
   }
 
+  // Si ya no cuenta con inscripciones activas, no es necesario que haya un límite, ya que no seguirá generando tickets.
+  if (inscripciones.length === 0) return true;
+
   // ---------------------------------------------------------
-  // 3. VALIDACIÓN DE TOPE DE CUPOS
+  // 2. VALIDACIÓN DE TOPE DE CUPOS
   // ---------------------------------------------------------
+
   const recuperacionesRealizadas = await prisma.recuperaciones.count({
     where: {
       alumno_id: Number.parseInt(alumnoId),
@@ -580,7 +563,7 @@ const eliminarRecuperacionAdmin = async (recuperacionId) => {
   }
 
   return await prisma.$transaction(async (tx) => {
-    
+
     if (ticket.es_por_lesion) {
       // 1. Restaurar asistencia usando la relación directa
       // Si el ticket tiene el ID del registro de asistencia, lo usamos para ser exactos
@@ -616,7 +599,7 @@ const eliminarRecuperacionAdmin = async (recuperacionId) => {
           where: { id: ticket.solicitud_lesion_id }
         });
       }
-      
+
       return { message: 'Depuración exacta completada.' };
 
     } else {

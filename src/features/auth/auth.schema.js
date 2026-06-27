@@ -24,7 +24,8 @@ export const authSchema = {
   }),
 
   resetPasswordSchema: z.object({
-    token: z.string().min(1, 'El token es obligatorio'),
+    userId: z.number().optional(),
+    token: z.string().min(1, 'El token es obligatorio').optional(),
     newPassword: z.string().min(6, 'La contraseña debe tener al menos 6 caracteres'),
   }),
 
@@ -32,7 +33,7 @@ export const authSchema = {
     currentPassword: z.string().min(1, 'La contraseña actual es obligatoria'),
     newPassword: z.string().min(6, 'La nueva contraseña debe tener al menos 6 caracteres'),
   }),
-  
+
   updateProfileSchema: z.object({
     email: z.string().email('Email inválido').optional().or(z.literal('')),
     telefono_personal: z.string().optional(),

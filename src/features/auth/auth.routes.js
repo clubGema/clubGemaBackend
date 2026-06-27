@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { authController } from './auth.controller.js';
 import { authenticate } from '../../shared/middlewares/auth.middleware.js';
 import { validate } from '../../shared/middlewares/validate.middleware.js';
+import { authorize } from '../../shared/middlewares/authorize.middleware.js';
 import { authSchema } from './auth.schema.js';
 
 import { loginLimiter } from '../../shared/middlewares/rateLimit.middleware.js';
@@ -31,6 +32,14 @@ router.post(
   '/reset-password',
   validate(authSchema.resetPasswordSchema),
   authController.resetPassword
+);
+
+router.post(
+  '/reset-password-admin',
+  authenticate,
+  authorize('Administrador'),
+  validate(authSchema.resetPasswordSchema),
+  authController.resetPasswordByAdmin
 );
 
 router.post(

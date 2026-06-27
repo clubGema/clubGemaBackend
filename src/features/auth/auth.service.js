@@ -6,6 +6,7 @@ import { ApiError } from '../../shared/utils/error.util.js';
 import { JWT_SECRET } from '../../config/secret.config.js';
 import { emailService } from '../../shared/services/brevo.email.service.js';
 import { authLogic } from './logic/auth.logic.js';
+import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 
 export const authService = {
   /**
@@ -361,6 +362,21 @@ export const authService = {
     }
   },
 
+  resetPasswordByAdmin: async (userId, newPassword) => {
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    try {
+      await prisma.credenciales_usuario.update({
+        where: { usuario_id: Number(userId) },
+        data: { hash_contrasena: hashedPassword },
+      });
+    } catch (e) {
+      if (e instanceof PrismaClientKnownRequestError) {
+        throw new ApiError(e.message, 400, { prismaCode: e.code, meta: e.meta })
+      };
+      throw new ApiError(e instanceof Error ? e.message : 'Error interno', 500);
+    };
+  },
+
   /**
    * Cambia la contraseña de un usuario autenticado prevalidando su contraseña actual.
    * @param {number} userId - ID del usuario autenticado.
@@ -384,7 +400,7 @@ export const authService = {
     }
 
     const hashedPassword = await bcrypt.hash(newPassword, 10);
-    
+
     await prisma.credenciales_usuario.update({
       where: { usuario_id: userId },
       data: { hash_contrasena: hashedPassword }
@@ -401,30 +417,30 @@ export const authService = {
       where: { id: userId },
       select: { id: true, rol_id: true },
     });
- 
+
     if (!usuario) {
       throw new ApiError('Usuario no encontrado', 404);
     }
- 
+
     await Promise.all([
       authService._updateBaseUser(userId, payload),
       authService._updateRoleSpecificData(userId, usuario.rol_id, payload),
     ]);
- 
+
     return await authService.getProfile(userId);
   },
- 
+
   /** @private */
   _updateBaseUser: async (userId, payload) => {
     const { email, telefono_personal, nombres, apellidos, genero } = payload;
     const userUpdates = {};
- 
+
     if (email !== undefined) userUpdates.email = email === '' ? null : email;
     if (telefono_personal !== undefined) userUpdates.telefono_personal = telefono_personal;
     if (nombres !== undefined) userUpdates.nombres = nombres;
     if (apellidos !== undefined) userUpdates.apellidos = apellidos;
     if (genero !== undefined) userUpdates.genero = genero;
- 
+
     if (Object.keys(userUpdates).length > 0) {
       await prisma.usuarios.update({
         where: { id: userId },
@@ -432,7 +448,7 @@ export const authService = {
       });
     }
   },
- 
+
   /** @private */
   _updateRoleSpecificData: async (userId, rolId, payload) => {
     // Alumno = 1, Profesor = 2, Coordinador = 3
@@ -442,7 +458,7 @@ export const authService = {
       if (condiciones_medicas !== undefined) alumnoUpdates.condiciones_medicas = condiciones_medicas;
       if (seguro_medico !== undefined) alumnoUpdates.seguro_medico = seguro_medico;
       if (grupo_sanguineo !== undefined) alumnoUpdates.grupo_sanguineo = grupo_sanguineo;
- 
+
       if (Object.keys(alumnoUpdates).length > 0) {
         await prisma.alumnos.updateMany({ where: { usuario_id: userId }, data: alumnoUpdates });
       }

@@ -39,7 +39,7 @@ export const iniciarCronJobs = () => {
 
   // ------------------------------------------------------------------
   // TAREA 2: EL VERDUGO DE VENCIMIENTOS (Todos los días a las 00:00 AM) 0 1 * * *
-  // Objetivo: Cambiar a FINALIZADO o PEN-RECU según el ciclo (Madre + 30 días + tolerancia).
+  // Objetivo: Cambiar a FINALIZADO (Madre + 30 días + tolerancia).
   // ------------------------------------------------------------------
   cron.schedule(
     '0 1 * * *',
@@ -116,20 +116,6 @@ export const iniciarCronJobs = () => {
         await cumpleanosService.ejecutarSaludosCumpleanos();
       } catch (error) {
         logger.error('[CRON ERROR] Falló el Festejero de Cumpleaños:', error);
-      }
-    },
-    { timezone: 'America/Lima' }
-  );
-
-  // Cron para actualizar estado de inscripciones pendientes de recuperación a finalizados cada día a la 1 am
-  cron.schedule(
-    '0 1 * * *',
-    async () => {
-      logger.info(`[CRON] Verificando estados de inscripciones pendientes de recuperación...`);
-      try {
-        await inscripcionCronService.cambiarEstado();
-      } catch (error) {
-        logger.error('[CRON ERROR] Falló la verificación de inscripciones:', error);
       }
     },
     { timezone: 'America/Lima' }

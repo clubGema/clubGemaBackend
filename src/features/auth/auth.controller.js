@@ -111,6 +111,15 @@ export const authController = {
     return apiResponse.success(res, { message: 'Contraseña actualizada con éxito' });
   }),
 
+  resetPasswordByAdmin: catchAsync(async (req, res) => {
+    const { userId, newPassword } = req.body;
+    await authService.resetPasswordByAdmin(userId, newPassword);
+
+    logger.info(`Contraseña del usuario con ID ${userId} actualizada correctamente.`)
+
+    return apiResponse.success(res, { message: 'Contraseña actualizada con éxito' })
+  }),
+
   changePassword: catchAsync(async (req, res) => {
     const { currentPassword, newPassword } = req.body;
     await authService.changePassword(req.user.id, currentPassword, newPassword);
