@@ -117,7 +117,7 @@ const evaluarSolicitud = async ({
     const inscripcionesActivas = await tx.inscripciones.findMany({
       where: {
         alumno_id: solicitud.alumno_id,
-        estado: { in: ['ACTIVO', 'PEN-RECU'] },
+        estado: { in: ['ACTIVO'] },
       },
     });
 

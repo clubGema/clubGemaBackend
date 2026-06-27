@@ -330,13 +330,6 @@ export const pagosService = {
                     email: true,
                     telefono_personal: true
                   }
-                },
-                _count: {
-                  select: {
-                    recuperaciones: {
-                      where: { estado: { in: ['PENDIENTE', 'PROGRAMADA'] } }
-                    }
-                  }
                 }
               }
             }
@@ -347,11 +340,7 @@ export const pagosService = {
       orderBy: { fecha_pago: 'desc' },
     });
 
-    // Mapeamos para enviar un flag simple 'bloqueado_por_asistencia'
-    return pagos.map(p => ({
-      ...p,
-      bloqueado_por_asistencia: (p.cuentas_por_cobrar?.alumnos?._count?.recuperaciones || 0) > 0
-    }));
+    return pagos;
   },
 
   // 5. ELIMINAR REGISTRO DE PAGO (Uso delicado)

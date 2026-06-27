@@ -29,7 +29,6 @@ export const inscripcionService = {
       return await prisma.$transaction(async (tx) => {
         // 🛡️ PASO 0: MUROS DE SEGURIDAD (Regla de Oro: Muro de Deuda)
         await Validators.validarMuroDeDeuda(tx, alumno_id);
-        await Validators.validarSinRecuperacionesPendientes(tx, alumno_id);
 
         // 🕵️‍♂️ PASO 1: DETECTIVE DE RÉGIMEN (Solo para saber si es Legacy o 2026)
         // Borramos Logic.calcularCicloUpgrade porque ya no hay sincronización.
@@ -362,7 +361,7 @@ export const inscripcionService = {
     return await prisma.inscripciones.findMany({
       where: {
         alumno_id: Number.parseInt(alumnoId),
-        estado: { notIn: ['FINALIZADO', 'PEN-RECU'] }
+        estado: { notIn: ['FINALIZADO'] }
       },
       include: {
         horarios_clases: {
@@ -437,22 +436,10 @@ export const inscripcionService = {
         throw new Error(`No se puede finalizar una inscripción con estado ${inscripcion.estado}.`);
       }
 
-      // 2. Aplicamos la misma lógica que "El Verdugo": Buscamos recuperaciones
-      const tieneRecuperaciones = await tx.recuperaciones.findFirst({
-        where: {
-          alumno_id: inscripcion.alumno_id,
-          estado: { in: ['PENDIENTE', 'PROGRAMADA'] }
-        }
-      });
-
-      // Si tiene tickets de recuperación, lo mandamos al "Purgatorio" (PEN-RECU)
-      // Si no tiene nada, se marca como FINALIZADO definitivamente
-      const nuevoEstado = tieneRecuperaciones ? 'PEN-RECU' : 'FINALIZADO';
-
       const inscripcionActualizada = await tx.inscripciones.update({
         where: { id: Number.parseInt(id) },
         data: {
-          estado: nuevoEstado,
+          estado: 'FINALIZADO',
           actualizado_en: new Date()
         }
       });
@@ -461,10 +448,8 @@ export const inscripcionService = {
 
       return {
         success: true,
-        mensaje: tieneRecuperaciones
-          ? 'Inscripción finalizada. Aún tienes recuperaciones pendientes.'
-          : 'Inscripción finalizada correctamente.',
-        nuevo_estado: nuevoEstado
+        mensaje: 'Inscripción finalizada correctamente.',
+        nuevo_estado: 'FINALIZADO'
       };
     });
   },

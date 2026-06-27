@@ -110,7 +110,7 @@ export const alumnoService = {
       where: {
         inscripciones: {
           some: {
-            estado: { in: ['ACTIVO', 'FINALIZADO', 'PEN-RECU'] },
+            estado: { in: ['ACTIVO', 'FINALIZADO'] },
             horarios_clases: { coordinador_id: coordinadorId }
           }
         }
@@ -121,7 +121,7 @@ export const alumnoService = {
         },
         inscripciones: {
           where: {
-            estado: { in: ['ACTIVO', 'FINALIZADO', 'PEN-RECU'] },
+            estado: { in: ['ACTIVO', 'FINALIZADO'] },
             horarios_clases: { coordinador_id: coordinadorId }
           },
           include: {

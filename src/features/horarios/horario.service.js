@@ -357,7 +357,9 @@ export const horarioService = {
     const insc = await prisma.inscripciones.findFirst({
       where: {
         alumno_id: alumnoId,
-        estado: { not: "FINALIZADO" },
+      },
+      orderBy: {
+        id: 'desc'
       },
       include: {
         horarios_clases: {
@@ -367,7 +369,7 @@ export const horarioService = {
         }
       }
     })
-    if (!insc) throw new ApiError('No hay una inscripción vigente para este usuario.', 404);
+    if (!insc) throw new ApiError('El alumno no cuenta con ninguna inscripción en la base de datos.', 404);
 
     const horarios = await prisma.horarios_clases.findMany({
       where: {
