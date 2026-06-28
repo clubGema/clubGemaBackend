@@ -172,6 +172,7 @@ model movimientos_financieros {
   monto            Decimal  @db.Decimal(10, 2)
   concepto         String   @db.VarChar(150) // Ej: "Venta de camiseta", "Pago de luz"
   metodo_pago_id   Int?
+  sede_id          Int?     // <--- NUEVO CAMPO (Opcional)
   fecha_movimiento DateTime @default(now()) @db.Timestamp(6)
   comprobante_url  String?  @db.VarChar(255)
   registrado_por   Int? // ID del administrador que registra el movimiento
@@ -180,6 +181,7 @@ model movimientos_financieros {
   // Relaciones
   metodos_pago  metodos_pago?  @relation(fields: [metodo_pago_id], references: [id], onDelete: SetNull)
   administrador administrador? @relation(fields: [registrado_por], references: [usuario_id], onDelete: SetNull)
+  sedes         sedes?         @relation(fields: [sede_id], references: [id], onDelete: SetNull) // <--- NUEVA RELACIÓN
 }
 
 model inscripciones_deudas_link {
@@ -310,6 +312,7 @@ model sedes {
   administrador     administrador[]
   canchas           canchas[]
   direcciones       direcciones     @relation(fields: [direccion_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  movimientos       movimientos_financieros[] // <--- NUEVA RELACIÓN
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.

@@ -16,7 +16,7 @@ router.use(authorize('Administrador'));
 
 // Endpoint especial para ver el balance general
 router.get('/balance', movimientosFinancierosController.obtenerResumenBalance);
-
+router.get('/resumen', movimientosFinancierosController.obtenerResumen);
 // CRUD estándar
 router.get('/', movimientosFinancierosController.listar);
 router.get('/:id', movimientosFinancierosController.obtenerPorId);
@@ -26,5 +26,6 @@ router.get('/:id', movimientosFinancierosController.obtenerPorId);
 router.post('/', movimientosFinancierosController.crear);
 router.put('/:id', movimientosFinancierosController.actualizar);
 router.delete('/:id', movimientosFinancierosController.eliminar);
+
 
 export default router;

@@ -51,6 +51,19 @@ export const movimientosFinancierosController = {
             res.status(400).json({ success: false, message: error.message });
         }
     },
+    obtenerResumen: async (req, res) => {
+        try {
+            const { mes, anio } = req.query;
+            // Validamos que los parámetros lleguen
+            if (!mes || !anio) {
+                return res.status(400).json({ success: false, message: "Parámetros 'mes' y 'anio' son obligatorios" });
+            }
+            const data = await movimientosFinancierosService.obtenerResumenMensual(mes, anio);
+            res.json({ success: true, data });
+        } catch (error) {
+            res.status(500).json({ success: false, message: error.message });
+        }
+    },
 
     obtenerResumenBalance: async (req, res) => {
         try {
