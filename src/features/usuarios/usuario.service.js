@@ -485,7 +485,6 @@ export const usuarioService = {
         username: true,
         alumnos: {
           select: {
-            // 🔥 CAMPOS DE SALUD (Sacados de tu imagen b09aa9)
             condiciones_medicas: true,
             seguro_medico: true,
             grupo_sanguineo: true,
@@ -498,8 +497,13 @@ export const usuarioService = {
                 referencia: true
               }
             },
+            
+            // 🔥 NUEVO: Traemos las deudas pendientes del alumno
+            cuentas_por_cobrar: {
+              where: { estado: 'PENDIENTE' },
+              select: { monto_final: true }
+            },
 
-            // 📞 CONTACTOS DE EMERGENCIA (Sacados de tu imagen 504af4)
             alumnos_contactos: {
               where: { es_principal: true },
               select: {
@@ -508,13 +512,10 @@ export const usuarioService = {
                 relacion: true
               }
             },
-
-            // 🎾 INSCRIPCIONES PARA SEDE, NIVEL Y CORTE
             inscripciones: {
-              // ❌ ELIMINA EL WHERE: where: { estado: 'ACTIVO' },
-              orderBy: { fecha_inscripcion: 'desc' }, // 🔥 La más reciente siempre será la [0]
+              orderBy: { fecha_inscripcion: 'desc' },
               select: {
-                estado: true, // 🔥 VITAL: Ahora necesitas saber el estado en el frontend
+                estado: true,
                 fecha_inscripcion: true,
                 horarios_clases: {
                   select: {
@@ -538,15 +539,6 @@ export const usuarioService = {
       orderBy: { nombres: 'asc' },
     });
   },
-  getUserByDni: async (dni) => {
-    return await prisma.usuarios.findFirst({
-      where: { numero_documento: dni },
-      include: {
-        alumnos: true // Traemos la info de alumno también por si acaso
-      }
-    });
-  },
-
   // Rutas delegadas a servicios especialistas
   getDashboardStats: dashboardService.getDashboardStats,
   getDetailedExcelReport: reporteService.getDetailedExcelReport,
