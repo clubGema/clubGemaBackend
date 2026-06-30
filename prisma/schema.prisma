@@ -223,6 +223,7 @@ model pagos {
   fecha_pago         DateTime?          @default(now()) @db.Timestamp(6)
   estado_validacion  String?            @default("PENDIENTE") @db.VarChar(20)
   revisado_por       Int?
+  comprobante_enviado Boolean?          @default(false)
   notas_validacion   String?            @db.VarChar(200)
   cuentas_por_cobrar cuentas_por_cobrar @relation(fields: [cuenta_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   metodos_pago       metodos_pago       @relation(fields: [metodo_pago_id], references: [id], onDelete: NoAction, onUpdate: NoAction)

@@ -539,6 +539,100 @@ export const usuarioService = {
       orderBy: { nombres: 'asc' },
     });
   },
+  
+async getReporteMaestro(fechaInicio, fechaFin) {
+    const pagos = await prisma.pagos.findMany({
+      where: {
+        fecha_pago: {
+          gte: fechaInicio ? new Date(`${fechaInicio}T00:00:00.000Z`) : undefined,
+          lte: fechaFin ? new Date(`${fechaFin}T23:59:59.999Z`) : undefined,
+        }
+      },
+      orderBy: { fecha_pago: 'desc' },
+      include: {
+        metodos_pago: {
+          select: { nombre: true }
+        },
+        cuentas_por_cobrar: {
+          include: {
+            catalogo_conceptos: {
+              select: { nombre: true }
+            },
+            // 🔥 PLAN A: Buscamos el link exacto de la deuda actual
+            inscripciones_deudas_link: {
+              include: {
+                inscripciones: {
+                  include: {
+                    horarios_clases: {
+                      include: {
+                        niveles_entrenamiento: { select: { nombre: true } },
+                        canchas: { include: { sedes: { select: { nombre: true } } } }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            alumnos: {
+              include: {
+                usuarios: {
+                  select: { nombres: true, apellidos: true }
+                },
+                // 🔥 PLAN B: Recuperamos tu código original. 
+                // Traemos la última inscripción histórica por si falla el Plan A
+                inscripciones: {
+                  take: 1,
+                  orderBy: { fecha_inscripcion: 'desc' },
+                  include: {
+                    horarios_clases: {
+                      include: {
+                        niveles_entrenamiento: { select: { nombre: true } },
+                        canchas: { include: { sedes: { select: { nombre: true } } } }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    });
+
+    return pagos.map(pago => {
+      const cuenta = pago.cuentas_por_cobrar;
+      const alumno = cuenta?.alumnos;
+      const usuario = alumno?.usuarios;
+      
+      // INTENTO 1 (Plan A): Buscar por el link directo
+      const links = cuenta?.inscripciones_deudas_link || [];
+      let inscripcionAsociada = links[0]?.inscripciones; 
+      
+      // INTENTO 2 (Plan B): Si la deuda no tiene link (pagos viejos/manuales), usamos su última inscripción
+      if (!inscripcionAsociada && alumno?.inscripciones?.length > 0) {
+        inscripcionAsociada = alumno.inscripciones[0];
+      }
+
+      const horario = inscripcionAsociada?.horarios_clases;
+
+      return {
+        "id": pago.id,
+        "Fecha de Pago": pago.fecha_pago ? new Date(pago.fecha_pago).toLocaleDateString('es-PE') : 'N/A',
+        "Fecha de Corte": cuenta?.fecha_vencimiento ? new Date(cuenta.fecha_vencimiento).toLocaleDateString('es-PE') : 'N/A',
+        "Sede": horario?.canchas?.sedes?.nombre || 'Sin Sede',
+        "Alumno": usuario ? `${usuario.nombres} ${usuario.apellidos}` : 'Desconocido',
+        "Monto": Number(pago.monto_pagado).toFixed(2),
+        "Medio de pago": pago.metodos_pago?.nombre || 'Otros',
+        "Motivo": cuenta?.catalogo_conceptos?.nombre || cuenta?.detalle_adicional || 'Pago',
+        "Nivel": horario?.niveles_entrenamiento?.nombre || 'Sin Nivel',
+        "Talla": "No registrada", 
+        "Estado Deuda": cuenta?.estado || 'N/A',            
+        "Validación Admin": pago.estado_validacion || 'N/A', 
+        "Boleta/Factura": pago.comprobante_enviado || false, 
+        "Comentarios": pago.notas_validacion || '' 
+      };
+    });
+  },
   // Rutas delegadas a servicios especialistas
   getDashboardStats: dashboardService.getDashboardStats,
   getDetailedExcelReport: reporteService.getDetailedExcelReport,

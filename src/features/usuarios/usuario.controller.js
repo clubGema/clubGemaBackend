@@ -89,4 +89,42 @@ export const usuarioController = {
       data: usuario || null,
     });
   }),
+  getReporteMaestro: catchAsync(async (req, res) => {
+    // 1. Atrapamos las fechas que mandará el frontend desde la URL
+    const { fechaInicio, fechaFin } = req.query;
+
+    // 2. Le pasamos las fechas al servicio
+    const dataReporte = await usuarioService.getReporteMaestro(fechaInicio, fechaFin);
+
+    return apiResponse.success(res, {
+      message: 'Reporte Maestro generado exitosamente',
+      data: {
+        reporte: dataReporte 
+      }
+    });
+  }),
+  updatePagoInline: catchAsync(async (req, res) => {
+    const { id } = req.params;
+    const { campo, valor } = req.body;
+
+    // Preparamos el objeto con lo que vamos a actualizar en Prisma
+    const dataAActualizar = {};
+    
+    // Filtramos para saber qué columna editaron exactamente
+    if (campo === 'Boleta/Factura') {
+      dataAActualizar.comprobante_enviado = valor; // Aquí valor es true o false
+    } else if (campo === 'Comentarios') {
+      dataAActualizar.notas_validacion = valor; // Aquí valor es el texto
+    }
+
+    // Ejecutamos el UPDATE
+    await prisma.pagos.update({
+      where: { id: Number(id) },
+      data: dataAActualizar
+    });
+
+    return apiResponse.success(res, { 
+      message: 'Registro actualizado exitosamente' 
+    });
+  }),
 };

@@ -57,5 +57,17 @@ router.get(
   authorize('Administrador'),
   usuarioController.getDetailedReport
 );
+router.get(
+  '/reporte/maestro', 
+  authenticate,
+  authorize('Administrador'),
+  usuarioController.getReporteMaestro
+);
+router.patch(
+  '/pago/:id/inline-edit', 
+  authenticate, 
+  authorize('Administrador'), 
+  usuarioController.updatePagoInline
+);
 
 export default router;
