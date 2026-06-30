@@ -633,6 +633,102 @@ async getReporteMaestro(fechaInicio, fechaFin) {
       };
     });
   },
+
+  getGraficosAvanzados: async () => {
+    // =========================================================
+    // GRÁFICO 1: ALUMNOS VIGENTES POR SEDE Y NIVEL
+    // =========================================================
+    const inscripcionesActivas = await prisma.inscripciones.findMany({
+      where: { 
+        // Asumiendo que usas un estado para saber si están activos
+        estado: { in: ['ACTIVO', 'PAGADO', 'PENDIENTE_PAGO'] } 
+      },
+      include: {
+        horarios_clases: {
+          include: {
+            niveles_entrenamiento: { select: { nombre: true } },
+            canchas: {
+              include: { sedes: { select: { nombre: true } } }
+            }
+          }
+        }
+      }
+    });
+
+    // Agrupamos la data para Recharts: { sede: 'Callao', 'BÁSICO': 15, 'AVANZADO': 5 }
+    const vigentesPorSede = inscripcionesActivas.reduce((acc, insc) => {
+      const sede = insc.horarios_clases?.canchas?.sedes?.nombre || 'Sin Sede';
+      const nivel = insc.horarios_clases?.niveles_entrenamiento?.nombre || 'Sin Nivel';
+      
+      if (!acc[sede]) acc[sede] = { sede };
+      acc[sede][nivel] = (acc[sede][nivel] || 0) + 1;
+      
+      return acc;
+    }, {});
+
+    const dataGrafico1 = Object.values(vigentesPorSede);
+
+    // =========================================================
+    // GRÁFICO 2: INGRESOS DIARIOS VS DESERCIONES (1 mes sin renovar)
+    // =========================================================
+    const haceUnMes = new Date();
+    haceUnMes.setMonth(haceUnMes.getMonth() - 1);
+
+    // 2.1 - Ingresos Diarios (Nuevas inscripciones)
+    const ingresosDelMes = await prisma.inscripciones.findMany({
+      where: { fecha_inscripcion: { gte: haceUnMes } },
+      select: { fecha_inscripcion: true }
+    });
+
+    // 2.2 - Deserciones (Alumnos cuya ÚLTIMA inscripción fue hace más de 1 mes)
+    // Primero traemos a todos los alumnos con su última inscripción
+    const alumnos = await prisma.alumnos.findMany({
+      include: {
+        inscripciones: {
+          orderBy: { fecha_inscripcion: 'desc' },
+          take: 1
+        }
+      }
+    });
+
+    const deserciones = alumnos.filter(alumno => {
+      const ultimaInsc = alumno.inscripciones[0];
+      // Si no tiene inscripción o su última fue hace más de 30 días, desertó
+      if (!ultimaInsc) return false; 
+      return new Date(ultimaInsc.fecha_inscripcion) < haceUnMes;
+    });
+
+    // Agrupamos por día para el gráfico lineal
+    const diasMap = {};
+    
+    // Sumamos ingresos por día
+    ingresosDelMes.forEach(insc => {
+      const dia = insc.fecha_inscripcion.toISOString().split('T')[0];
+      if (!diasMap[dia]) diasMap[dia] = { fecha: dia, ingresos: 0, deserciones: 0 };
+      diasMap[dia].ingresos += 1;
+    });
+
+    // Sumamos las deserciones (las asignamos al día exacto en que cumplieron 30 días de inactividad)
+    deserciones.forEach(alumno => {
+      const fechaDesercion = new Date(alumno.inscripciones[0].fecha_inscripcion);
+      fechaDesercion.setMonth(fechaDesercion.getMonth() + 1); // El día exacto que se volvieron desertores
+      
+      // Solo mostramos las deserciones que cayeron en este último mes
+      if (fechaDesercion >= haceUnMes) {
+        const dia = fechaDesercion.toISOString().split('T')[0];
+        if (!diasMap[dia]) diasMap[dia] = { fecha: dia, ingresos: 0, deserciones: 0 };
+        diasMap[dia].deserciones += 1;
+      }
+    });
+
+    // Ordenamos cronológicamente
+    const dataGrafico2 = Object.values(diasMap).sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
+
+    return {
+      vigentesPorSedeNivel: dataGrafico1,
+      ingresosVsDeserciones: dataGrafico2
+    };
+  },
   // Rutas delegadas a servicios especialistas
   getDashboardStats: dashboardService.getDashboardStats,
   getDetailedExcelReport: reporteService.getDetailedExcelReport,

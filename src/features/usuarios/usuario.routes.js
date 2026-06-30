@@ -70,4 +70,11 @@ router.patch(
   usuarioController.updatePagoInline
 );
 
+router.get(
+  '/reporte/graficos-avanzados', 
+  authenticate, 
+  authorize('Administrador'), 
+  usuarioController.getGraficosAvanzados
+);
+
 export default router;

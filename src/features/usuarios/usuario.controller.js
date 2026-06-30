@@ -103,6 +103,16 @@ export const usuarioController = {
       }
     });
   }),
+
+  getGraficosAvanzados: catchAsync(async (req, res) => {
+    // Llamamos a tu nueva súper función del servicio
+    const dataGraficos = await usuarioService.getGraficosAvanzados();
+
+    return apiResponse.success(res, {
+      message: 'Data para gráficos generada exitosamente',
+      data: dataGraficos
+    });
+  }),
   updatePagoInline: catchAsync(async (req, res) => {
     const { id } = req.params;
     const { campo, valor } = req.body;
