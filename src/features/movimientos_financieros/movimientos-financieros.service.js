@@ -1,17 +1,29 @@
 import { PrismaClient } from '@prisma/client';
+import { ApiError } from '../../shared/utils/error.util.js';
+import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 const prisma = new PrismaClient();
+
+const getMonthLocal = (fecha) => {
+    const date = new Date(fecha)
+    return Number(
+        new Intl.DateTimeFormat("es-PE", {
+            timeZone: "America/Lima",
+            month: "numeric",
+        }).format(date)
+    );
+}
 
 export const movimientosFinancierosService = {
     // Obtener todos los movimientos (con opción a filtrar por tipo)
     obtenerTodos: async (filtros = {}) => {
         const { tipo_movimiento, fecha_inicio, fecha_fin } = filtros;
-        
+
         let where = {};
-        
+
         if (tipo_movimiento) {
             where.tipo_movimiento = tipo_movimiento.toUpperCase();
         }
-        
+
         if (fecha_inicio || fecha_fin) {
             where.fecha_movimiento = {};
             if (fecha_inicio) where.fecha_movimiento.gte = new Date(fecha_inicio);
@@ -23,10 +35,10 @@ export const movimientosFinancierosService = {
             orderBy: { fecha_movimiento: 'desc' },
             include: {
                 metodos_pago: { select: { nombre: true } },
-                administrador: { 
-                    select: { 
-                        usuarios: { select: { nombres: true, apellidos: true } } 
-                    } 
+                administrador: {
+                    select: {
+                        usuarios: { select: { nombres: true, apellidos: true } }
+                    }
                 }
             }
         });
@@ -38,10 +50,10 @@ export const movimientosFinancierosService = {
             where: { id: parseInt(id) },
             include: {
                 metodos_pago: { select: { nombre: true } },
-                administrador: { 
-                    select: { 
-                        usuarios: { select: { nombres: true, apellidos: true } } 
-                    } 
+                administrador: {
+                    select: {
+                        usuarios: { select: { nombres: true, apellidos: true } }
+                    }
                 }
             }
         });
@@ -49,6 +61,9 @@ export const movimientosFinancierosService = {
 
     // Crear un nuevo movimiento (Ingreso o Egreso)
     crear: async (data, usuario_id) => {
+        const mesHoy = getMonthLocal(new Date());
+        const mesData = getMonthLocal(data.fecha_movimiento);
+        if (mesData > mesHoy) throw new ApiError('Debe registrar el ingreso/egreso en el mes actual.', 400)
         return await prisma.movimientos_financieros.create({
             data: {
                 tipo_movimiento: data.tipo_movimiento.toUpperCase(),
@@ -58,13 +73,17 @@ export const movimientosFinancierosService = {
                 fecha_movimiento: data.fecha_movimiento ? new Date(data.fecha_movimiento) : new Date(),
                 comprobante_url: data.comprobante_url,
                 registrado_por: usuario_id, // ID del administrador que está haciendo la petición
-                notas: data.notas
+                notas: data.notas,
+                sede_id: data.sede_id,
             }
         });
     },
 
     // Actualizar un movimiento (Ej: si se equivocaron en el monto o concepto)
     actualizar: async (id, data) => {
+        const mesHoy = getMonthLocal(new Date());
+        const mesData = getMonthLocal(data.fecha_movimiento);
+        if (mesData > mesHoy) throw new ApiError('Debe actualizar el ingreso/egreso en el mes actual.', 400);
         return await prisma.movimientos_financieros.update({
             where: { id: parseInt(id) },
             data: {
@@ -73,121 +92,128 @@ export const movimientosFinancierosService = {
                 concepto: data.concepto,
                 metodo_pago_id: data.metodo_pago_id,
                 comprobante_url: data.comprobante_url,
-                notas: data.notas
+                notas: data.notas,
+                sede_id: data.sede_id,
+                fecha_movimiento: data.fecha_movimiento,
                 // La fecha_movimiento y registrado_por rara vez deberían cambiar tras la creación
             }
         });
     },
-obtenerResumenMensual: async (mes, anio) => {
-    const mesInt = parseInt(mes);
-    const anioInt = parseInt(anio);
-    
-    // Rango de fechas para el mes
-    const fechaInicio = new Date(anioInt, mesInt - 1, 1);
-    const fechaFin = new Date(anioInt, mesInt, 0, 23, 59, 59);
+    obtenerResumenMensual: async (mes, anio) => {
+        const mesInt = parseInt(mes);
+        const anioInt = parseInt(anio);
 
-    // 1. Ingresos (Pagos validados)
-    const ingresos = await prisma.pagos.findMany({
-        where: {
-            estado_validacion: 'APROBADO',
-            fecha_pago: { gte: fechaInicio, lte: fechaFin }
-        },
-        include: { 
-            cuentas_por_cobrar: { 
-                include: { 
-                    alumnos: { 
-                        include: { 
-                            usuarios: true, // <--- CLAVE: Traemos los datos del usuario para sacar su nombre
-                            inscripciones: { 
-                                include: { 
-                                    horarios_clases: { 
-                                        include: { 
-                                            canchas: { 
-                                                include: { sedes: true } 
-                                            } 
-                                        } 
-                                    } 
-                                } 
-                            } 
-                        } 
-                    } 
-                } 
-            } 
-        }
-    });
+        // Rango de fechas para el mes
+        const fechaInicio = new Date(anioInt, mesInt - 1, 1);
+        const fechaFin = new Date(anioInt, mesInt, 0, 23, 59, 59);
 
-    // 2. Movimientos Manuales (Ingresos/Egresos)
-    const manuales = await prisma.movimientos_financieros.findMany({
-        where: { fecha_movimiento: { gte: fechaInicio, lte: fechaFin } },
-        include: { 
-            sedes: true,
-            administrador: {
-                include: {
-                    usuarios: true // <--- CLAVE: Traemos los datos del usuario del administrador
+        // 1. Ingresos (Pagos validados)
+        const ingresos = await prisma.pagos.findMany({
+            where: {
+                estado_validacion: 'APROBADO',
+                fecha_pago: { gte: fechaInicio, lte: fechaFin }
+            },
+            include: {
+                cuentas_por_cobrar: {
+                    include: {
+                        alumnos: {
+                            include: {
+                                usuarios: true, // <--- CLAVE: Traemos los datos del usuario para sacar su nombre
+                                inscripciones: {
+                                    include: {
+                                        horarios_clases: {
+                                            include: {
+                                                canchas: {
+                                                    include: { sedes: true }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
-        } 
-    });
-
-    // 3. Estructura para el Frontend
-    const reporte = {};
-
-    // Procesar ingresos automáticos
-    ingresos.forEach(pago => {
-        const sede = pago.cuentas_por_cobrar?.alumnos?.inscripciones[0]?.horarios_clases?.canchas?.sedes?.nombre || 'GENERAL';
-        
-        // Extraemos el nombre desde la relación usuarios
-        const dataUsuario = pago.cuentas_por_cobrar?.alumnos?.usuarios;
-        const nombreCompletoAlumno = dataUsuario ? `${dataUsuario.nombres} ${dataUsuario.apellidos}` : '-';
-
-        if (!reporte[sede]) reporte[sede] = { ingresos: [], egresos: [] };
-        
-        reporte[sede].ingresos.push({ 
-            id: pago.id,
-            concepto: pago.cuentas_por_cobrar?.detalle_adicional || 'PAGO DE CUOTA', 
-            monto: pago.monto_pagado.toString(), 
-            fecha: pago.fecha_pago,
-            alumno: nombreCompletoAlumno, // Inyectamos el nombre real
-            registrado_por: 'SISTEMA AUTOMÁTICO'
         });
-    });
 
-    // Procesar movimientos manuales
-    manuales.forEach(m => {
-        const sedeKey = m.sedes?.nombre || 'GENERAL'; 
+        // 2. Movimientos Manuales (Ingresos/Egresos)
+        const manuales = await prisma.movimientos_financieros.findMany({
+            where: { fecha_movimiento: { gte: fechaInicio, lte: fechaFin } },
+            include: {
+                sedes: true,
+                administrador: {
+                    include: {
+                        usuarios: true // <--- CLAVE: Traemos los datos del usuario del administrador
+                    }
+                }
+            }
+        });
 
-        if (!reporte[sedeKey]) {
-            reporte[sedeKey] = { ingresos: [], egresos: [] };
-        }
+        // 3. Estructura para el Frontend
+        const reporte = {};
 
-        // Extraemos el nombre del administrador desde la relación usuarios
-        const dataAdmin = m.administrador?.usuarios;
-        const nombreAdmin = dataAdmin ? `${dataAdmin.nombres} ${dataAdmin.apellidos}` : (m.registrado_por ? `Admin ID: ${m.registrado_por}` : 'SISTEMA');
+        // Procesar ingresos automáticos
+        ingresos.forEach(pago => {
+            const sede = pago.cuentas_por_cobrar?.alumnos?.inscripciones[0]?.horarios_clases?.canchas?.sedes?.nombre || 'GENERAL';
 
-        const formatoMovimiento = {
-            id: m.id,
-            concepto: m.concepto,
-            monto: m.monto.toString(),
-            fecha: m.fecha_movimiento,
-            alumno: '-', // Un gasto manual de caja no tiene un alumno específico
-            registrado_por: nombreAdmin // Inyectamos el nombre del administrador
-        };
+            // Extraemos el nombre desde la relación usuarios
+            const dataUsuario = pago.cuentas_por_cobrar?.alumnos?.usuarios;
+            const nombreCompletoAlumno = dataUsuario ? `${dataUsuario.nombres} ${dataUsuario.apellidos}` : '-';
 
-        if (m.tipo_movimiento === 'INGRESO') {
-            reporte[sedeKey].ingresos.push(formatoMovimiento);
-        } else {
-            reporte[sedeKey].egresos.push(formatoMovimiento); 
-        }
-    });
+            if (!reporte[sede]) reporte[sede] = { ingresos: [], egresos: [] };
 
-    return reporte;
-},
+            reporte[sede].ingresos.push({
+                id: pago.id,
+                concepto: pago.cuentas_por_cobrar?.detalle_adicional || 'PAGO DE CUOTA',
+                monto: pago.monto_pagado.toString(),
+                fecha: pago.fecha_pago,
+                alumno: nombreCompletoAlumno, // Inyectamos el nombre real
+                registrado_por: 'SISTEMA AUTOMÁTICO'
+            });
+        });
+
+        // Procesar movimientos manuales
+        manuales.forEach(m => {
+            const sedeKey = m.sedes?.nombre || 'GENERAL';
+
+            if (!reporte[sedeKey]) {
+                reporte[sedeKey] = { ingresos: [], egresos: [] };
+            }
+
+            // Extraemos el nombre del administrador desde la relación usuarios
+            const dataAdmin = m.administrador?.usuarios;
+            const nombreAdmin = dataAdmin ? `${dataAdmin.nombres} ${dataAdmin.apellidos}` : (m.registrado_por ? `Admin ID: ${m.registrado_por}` : 'SISTEMA');
+
+            const formatoMovimiento = {
+                id: m.id,
+                concepto: m.concepto,
+                monto: m.monto.toString(),
+                fecha: m.fecha_movimiento,
+                alumno: '-', // Un gasto manual de caja no tiene un alumno específico
+                registrado_por: nombreAdmin // Inyectamos el nombre del administrador
+            };
+
+            if (m.tipo_movimiento === 'INGRESO') {
+                reporte[sedeKey].ingresos.push(formatoMovimiento);
+            } else {
+                reporte[sedeKey].egresos.push(formatoMovimiento);
+            }
+        });
+
+        return reporte;
+    },
 
     // Eliminar un movimiento (Opcional, a veces en finanzas es mejor "anular" que borrar)
     eliminar: async (id) => {
-        return await prisma.movimientos_financieros.delete({
-            where: { id: parseInt(id) }
-        });
+        try {
+            return await prisma.movimientos_financieros.delete({
+                where: { id: parseInt(id) }
+            });
+        } catch (e) {
+            if (e instanceof PrismaClientKnownRequestError) throw new ApiError(e.message, 400, { prismaCode: e.code, meta: e.meta });
+            throw new ApiError(e instanceof Error ? e.message : 'Error Interno', 500);
+        }
     },
 
     // Obtener balance de caja (Total Ingresos - Total Egresos)
