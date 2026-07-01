@@ -129,7 +129,7 @@ export const usuarioService = {
         datosRol
       );
 
-      if (rol.nombre.toLowerCase() === 'alumno') {
+      if (rol.nombre.toLowerCase() === 'alumno' && datosRolEspecifico) {
         await registroLogic.crearContactoEmergencia(
           tx,
           nuevoUsuario.id,
@@ -497,7 +497,7 @@ export const usuarioService = {
                 referencia: true
               }
             },
-            
+
             // 🔥 NUEVO: Traemos las deudas pendientes del alumno
             cuentas_por_cobrar: {
               where: { estado: 'PENDIENTE' },
@@ -519,8 +519,8 @@ export const usuarioService = {
                 fecha_inscripcion: true,
                 horarios_clases: {
                   select: {
-                    hora_inicio: true, 
-                    hora_fin: true,    
+                    hora_inicio: true,
+                    hora_fin: true,
                     dia_semana: true,
                     niveles_entrenamiento: { select: { nombre: true } },
                     canchas: {
@@ -539,8 +539,8 @@ export const usuarioService = {
       orderBy: { nombres: 'asc' },
     });
   },
-  
-async getReporteMaestro(fechaInicio, fechaFin) {
+
+  async getReporteMaestro(fechaInicio, fechaFin) {
     const pagos = await prisma.pagos.findMany({
       where: {
         fecha_pago: {
@@ -603,11 +603,11 @@ async getReporteMaestro(fechaInicio, fechaFin) {
       const cuenta = pago.cuentas_por_cobrar;
       const alumno = cuenta?.alumnos;
       const usuario = alumno?.usuarios;
-      
+
       // INTENTO 1 (Plan A): Buscar por el link directo
       const links = cuenta?.inscripciones_deudas_link || [];
-      let inscripcionAsociada = links[0]?.inscripciones; 
-      
+      let inscripcionAsociada = links[0]?.inscripciones;
+
       // INTENTO 2 (Plan B): Si la deuda no tiene link (pagos viejos/manuales), usamos su última inscripción
       if (!inscripcionAsociada && alumno?.inscripciones?.length > 0) {
         inscripcionAsociada = alumno.inscripciones[0];
@@ -625,11 +625,11 @@ async getReporteMaestro(fechaInicio, fechaFin) {
         "Medio de pago": pago.metodos_pago?.nombre || 'Otros',
         "Motivo": cuenta?.catalogo_conceptos?.nombre || cuenta?.detalle_adicional || 'Pago',
         "Nivel": horario?.niveles_entrenamiento?.nombre || 'Sin Nivel',
-        "Talla": "No registrada", 
-        "Estado Deuda": cuenta?.estado || 'N/A',            
-        "Validación Admin": pago.estado_validacion || 'N/A', 
-        "Boleta/Factura": pago.comprobante_enviado || false, 
-        "Comentarios": pago.notas_validacion || '' 
+        "Talla": "No registrada",
+        "Estado Deuda": cuenta?.estado || 'N/A',
+        "Validación Admin": pago.estado_validacion || 'N/A',
+        "Boleta/Factura": pago.comprobante_enviado || false,
+        "Comentarios": pago.notas_validacion || ''
       };
     });
   },
@@ -639,9 +639,9 @@ async getReporteMaestro(fechaInicio, fechaFin) {
     // GRÁFICO 1: ALUMNOS VIGENTES POR SEDE Y NIVEL
     // =========================================================
     const inscripcionesActivas = await prisma.inscripciones.findMany({
-      where: { 
+      where: {
         // Asumiendo que usas un estado para saber si están activos
-        estado: { in: ['ACTIVO', 'PAGADO', 'PENDIENTE_PAGO'] } 
+        estado: { in: ['ACTIVO', 'PAGADO', 'PENDIENTE_PAGO'] }
       },
       include: {
         horarios_clases: {
@@ -659,10 +659,10 @@ async getReporteMaestro(fechaInicio, fechaFin) {
     const vigentesPorSede = inscripcionesActivas.reduce((acc, insc) => {
       const sede = insc.horarios_clases?.canchas?.sedes?.nombre || 'Sin Sede';
       const nivel = insc.horarios_clases?.niveles_entrenamiento?.nombre || 'Sin Nivel';
-      
+
       if (!acc[sede]) acc[sede] = { sede };
       acc[sede][nivel] = (acc[sede][nivel] || 0) + 1;
-      
+
       return acc;
     }, {});
 
@@ -694,13 +694,13 @@ async getReporteMaestro(fechaInicio, fechaFin) {
     const deserciones = alumnos.filter(alumno => {
       const ultimaInsc = alumno.inscripciones[0];
       // Si no tiene inscripción o su última fue hace más de 30 días, desertó
-      if (!ultimaInsc) return false; 
+      if (!ultimaInsc) return false;
       return new Date(ultimaInsc.fecha_inscripcion) < haceUnMes;
     });
 
     // Agrupamos por día para el gráfico lineal
     const diasMap = {};
-    
+
     // Sumamos ingresos por día
     ingresosDelMes.forEach(insc => {
       const dia = insc.fecha_inscripcion.toISOString().split('T')[0];
@@ -712,7 +712,7 @@ async getReporteMaestro(fechaInicio, fechaFin) {
     deserciones.forEach(alumno => {
       const fechaDesercion = new Date(alumno.inscripciones[0].fecha_inscripcion);
       fechaDesercion.setMonth(fechaDesercion.getMonth() + 1); // El día exacto que se volvieron desertores
-      
+
       // Solo mostramos las deserciones que cayeron en este último mes
       if (fechaDesercion >= haceUnMes) {
         const dia = fechaDesercion.toISOString().split('T')[0];
