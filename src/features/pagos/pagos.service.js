@@ -167,6 +167,16 @@ export const pagosService = {
               },
             });
 
+            if (insc.tipo_inscripcion === 'INDIVIDUAL') {
+              await asistenciaService.generarClaseUnica(tx, {
+                inscripcion_id: insc.id,
+                dia_semana: insc.horarios_clases.dia_semana,
+                coordinador_id: insc.horarios_clases.coordinador_id,
+                fecha_inicio: insc.fecha_inscripcion,
+              });
+              continue;
+            }
+
             // GENERACIÓN DE ASISTENCIAS
             await asistenciaService.generarClasesFuturas(tx, {
               inscripcion_id: insc.id,

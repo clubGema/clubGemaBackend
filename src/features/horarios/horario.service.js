@@ -357,6 +357,7 @@ export const horarioService = {
     const insc = await prisma.inscripciones.findFirst({
       where: {
         alumno_id: alumnoId,
+        tipo_inscripcion: 'REGULAR',
       },
       orderBy: {
         id: 'desc'

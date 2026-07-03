@@ -1,5 +1,7 @@
 import { Router } from 'express';
 import { inscripcionController } from './inscripcion.controller.js';
+import { authorize } from '../../shared/middlewares/authorize.middleware.js';
+import { authenticate } from '../../shared/middlewares/auth.middleware.js';
 
 const router = Router();
 
@@ -40,4 +42,7 @@ router.put(
 router.patch('/:id/separar-finalizar', inscripcionController.separarYFinalizar);
 
 router.patch('/paquete/fecha/:cuentaId', inscripcionController.actualizarFechaInicio);
+
+router.post('/individual', authenticate, authorize('Administrador', 'Alumno'), inscripcionController.inscribirIndividual)
+
 export default router;

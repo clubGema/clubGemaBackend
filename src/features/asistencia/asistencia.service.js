@@ -692,5 +692,31 @@ export const asistenciaService = {
       }
     })
     return registros.count;
+  },
+
+  generarClaseUnica: async (tx, params) => {
+    const { inscripcion_id, dia_semana, coordinador_id, fecha_inicio } = params;
+
+    const fechaInicioCalculo = new Date(fecha_inicio);
+
+    const fechaLimite = new Date(fechaInicioCalculo);
+    fechaLimite.setDate(fechaLimite.getDate() + 6);
+
+    const fechasClases = calcularProximasFechas(fechaInicioCalculo, dia_semana, fechaLimite);
+
+    const datosAsistencia = fechasClases.map((fecha) => ({
+      inscripcion_id: inscripcion_id,
+      fecha: fecha,
+      estado: 'PROGRAMADA',
+      registrado_por: coordinador_id,
+      comentario: `Clase Individual`,
+    }));
+
+    if (datosAsistencia.length > 0) {
+      await tx.registros_asistencia.createMany({
+        data: datosAsistencia,
+        skipDuplicates: true,
+      });
+    }
   }
 };

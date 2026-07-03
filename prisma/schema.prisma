@@ -151,8 +151,7 @@ model inscripciones {
   estado                     String?   @default("PENDIENTE_PAGO") @db.VarChar(20)
 
   // NUEVOS CAMPOS PARA CLASES SUELTAS
-  tipo_inscripcion   String?   @default("REGULAR") @db.VarChar(20) // 'REGULAR' o 'CLASE_SUELTA'
-  fecha_clase_suelta DateTime? @db.Date // Se llena solo si es CLASE_SUELTA
+  tipo_inscripcion   String?   @default("REGULAR") @db.VarChar(20) // 'REGULAR' o 'INDIVIDUAL'
 
   actualizado_en       DateTime? @default(now()) @db.Timestamp(6)
   creado_en            DateTime? @default(now()) @db.Timestamp(6)
