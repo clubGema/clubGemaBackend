@@ -278,9 +278,18 @@ export const inscripcionController = {
   inscribirIndividual: async (req, res) => {
     try {
       const resultado = await inscripcionService.inscribirIndividual(req.body);
-      return apiResponse.success(res, { data: resultado, message: resultado.mensaje })
+      return apiResponse.success(res, { data: resultado, message: resultado.mensaje });
     } catch (e) {
-      return apiResponse.error(res, { message: e.message || 'Error Interno del Servidor', status: e.statusCode || 500 })
+      return apiResponse.error(res, { message: e.message || 'Error Interno del Servidor', status: e.statusCode || 500 });
+    }
+  },
+
+  inscribirIndividualByAdmin: async (req, res) => {
+    try {
+      const resultado = await inscripcionService.inscribirIndividualByAdmin(req.body);
+      return apiResponse.success(res, { data: resultado, message: 'Inscripción individual realizada correctamente' });
+    } catch (e) {
+      return apiResponse.error(res, { message: e.message || 'Error Interno del Servidor', status: e.statusCode || 500 });
     }
   }
 

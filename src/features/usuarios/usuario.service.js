@@ -729,6 +729,15 @@ export const usuarioService = {
       ingresosVsDeserciones: dataGrafico2
     };
   },
+
+  getUserByDni: async (dni) => {
+    return await prisma.usuarios.findFirst({
+      where: { numero_documento: dni },
+      include: {
+        alumnos: true // Traemos la info de alumno también por si acaso
+      }
+    });
+  },
   // Rutas delegadas a servicios especialistas
   getDashboardStats: dashboardService.getDashboardStats,
   getDetailedExcelReport: reporteService.getDetailedExcelReport,

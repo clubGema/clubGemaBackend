@@ -43,6 +43,8 @@ router.patch('/:id/separar-finalizar', inscripcionController.separarYFinalizar);
 
 router.patch('/paquete/fecha/:cuentaId', inscripcionController.actualizarFechaInicio);
 
-router.post('/individual', authenticate, authorize('Administrador', 'Alumno'), inscripcionController.inscribirIndividual)
+router.post('/individual', authenticate, authorize('Alumno'), inscripcionController.inscribirIndividual);
+
+router.post('/individual-admin', authenticate, authorize('Administrador'), inscripcionController.inscribirIndividualByAdmin);
 
 export default router;

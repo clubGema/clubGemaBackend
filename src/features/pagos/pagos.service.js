@@ -8,7 +8,7 @@ import { notificacionesService } from '../notificaciones/notificaciones.service.
 
 export const pagosService = {
   // 1. REGISTRAR EL PAGO (Integrado con Cloudinary 🚀)
-  registrarPago: async (data) => {
+  registrarPago: async (data, tx = null) => {
     // 1. Validar input básico
     Utils.validarInputPago(data);
     const { deuda_id, monto, metodo_pago, codigo_operacion, voucher_url, voucherFile } = data;
@@ -25,7 +25,7 @@ export const pagosService = {
       }
     }
 
-    return await prisma.$transaction(async (tx) => {
+    const ejecutar = async (tx) => {
       // 🛡️ PASO A: VALIDAR LA DEUDA
       const deuda = await Validators.validarDeudaParaPago(tx, deuda_id);
       // 🔥 NUEVA REGLA: LOS UPGRADES NO ACEPTAN PAGOS PARCIALES
@@ -68,11 +68,15 @@ export const pagosService = {
         pago: nuevoPago,
         cupos_asegurados: inscripcionesUpdate.count,
       };
-    });
+    }
+    if (tx) {
+      return await ejecutar(tx);
+    }
+    return await prisma.$transaction(ejecutar);
   },
 
   // 2. VALIDAR EL PAGO (Tu lógica + Corrección de Monto + Sincronización de Fechas 🛡️)
-  validarPago: async (data) => {
+  validarPago: async (data, tx = null) => {
     const { pago_id, accion, usuario_admin_id, notas, monto_real_confirmado } = data;
     const esAprobado = accion === 'APROBAR';
 
@@ -80,7 +84,7 @@ export const pagosService = {
       throw new Error('La acción debe ser APROBAR o RECHAZAR.');
     }
 
-    return await prisma.$transaction(async (tx) => {
+    const ejecutar = async (tx) => {
       // 🛡️ PASO 1: Buscar y Validar el pago
       let pago = await Validators.buscarYValidarPagoPendiente(tx, pago_id);
 
@@ -93,7 +97,7 @@ export const pagosService = {
             data: {
               monto_pagado: montoAdmin,
               notas_validacion: `Monto corregido por Admin. (Reportado: ${pago.monto_pagado})`,
-              codigo_operacion: 'Pagado | Sin código',
+              codigo_operacion: pago.codigo_operacion || 'Pagado | Sin código',
             },
             include: { cuentas_por_cobrar: true },
           });
@@ -129,7 +133,7 @@ export const pagosService = {
           revisado_por: Number.parseInt(usuario_admin_id),
           notas_validacion: `${notas || ''} | ${notaFinalInformativa}`,
           fecha_pago: new Date(),
-          codigo_operacion: 'Pagado | Sin código',
+          codigo_operacion: pago.codigo_operacion || 'Pagado | Sin código',
         },
       });
 
@@ -214,7 +218,11 @@ export const pagosService = {
         pago: pagoActualizado,
         saldo_pendiente: saldoRestante,
       };
-    });
+    }
+    if (tx) {
+      return await ejecutar(tx);
+    }
+    return await prisma.$transaction(ejecutar);
   },
   obtenerTodos: async () => {
     return await prisma.pagos.findMany({

@@ -6,11 +6,13 @@ import * as Logic from './logic/inscripcion.logic.js';
 import { asistenciaService } from '../asistencia/asistencia.service.js';
 import { ApiError } from '../../shared/utils/error.util.js';
 import { CuentasPorCobrarService } from '../cuenta_por_cobrar/cuentas_por_cobrar.service.js';
+import { pagosService } from '../pagos/pagos.service.js';
 
 // 🔥 IMPORTAMOS DAYJS Y CONFIGURAMOS LIMA PARA LOS LOGS 🔥
 import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc.js';
 import timezone from 'dayjs/plugin/timezone.js';
+import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 dayjs.extend(utc);
 dayjs.extend(timezone);
 const TZ_LIMA = 'America/Lima';
@@ -821,131 +823,174 @@ export const inscripcionService = {
     });
   },
 
-  inscribirIndividual: async (data) => {
+  inscribirIndividual: async (data, tx = null) => {
     const { alumno_id, idHorario, fecha_inicio_electiva } = data;
 
-    try {
-      return await prisma.$transaction(async (tx) => {
-        await Validators.validarMuroDeDeuda(tx, alumno_id);
+    const ejecutar = async (tx) => {
+      await Validators.validarMuroDeDeuda(tx, alumno_id);
 
-        const conceptoAplicar = await tx.catalogo_conceptos.findFirst({
-          where: {
-            codigo_interno: 'CLASE_UNITARIA_2026',
-            activo: true,
-          }
-        });
-
-        if (!conceptoAplicar) {
-          throw new ApiError(`⛔ No existe un plan para CLASE_UNITARIA_2026.`, 404);
+      const conceptoAplicar = await tx.catalogo_conceptos.findFirst({
+        where: {
+          codigo_interno: 'CLASE_UNITARIA_2026',
+          activo: true,
         }
-
-        const paramZ = await tx.parametros_sistema.findUnique({ where: { clave: 'TIEMPO_LIMITE_RESERVA_MIN' } });
-        const fechaLimiteZombie = new Date(Date.now() - (paramZ ? parseInt(paramZ.valor) : 20) * 60 * 1000);
-
-        const inicioReal = fecha_inicio_electiva
-          ? dayjs.tz(fecha_inicio_electiva, TZ_LIMA).hour(12).toDate()
-          : dayjs.tz(TZ_LIMA).hour(12).toDate();
-
-        await Validators.validarAforoHorario(tx, idHorario, fechaLimiteZombie);
-
-        const nuevaInscripcion = await tx.inscripciones.create({
-          data: {
-            alumno_id: parseInt(alumno_id),
-            horario_id: idHorario,
-            id_grupo_transaccion: null,
-            estado: 'PENDIENTE_PAGO',
-            fecha_inscripcion: inicioReal,
-            fecha_inscripcion_original: inicioReal,
-            tipo_inscripcion: 'INDIVIDUAL',
-          },
-          include: { horarios_clases: true }
-        });
-
-        let totalCobrar = Number(conceptoAplicar.precio_base);
-        let detalleCobro = [`Plan Individual`];
-
-        // // Si en caso se puede incluir camiseta en clase individual, se descomenta.
-        // if (incluye_camiseta) {
-        //   totalCobrar += 50;
-        //   detalleCobro.push("Camiseta Oficial Gema");
-        // }
-
-        const nuevaCuenta = await tx.cuentas_por_cobrar.create({
-          data: {
-            alumno_id: parseInt(alumno_id),
-            concepto_id: conceptoAplicar.id,
-            monto_final: totalCobrar,
-            detalle_adicional: detalleCobro.join(' | '),
-            fecha_vencimiento: dayjs().tz(TZ_LIMA).add(2, 'day').endOf('day').toDate(), // 48 horas de reserva
-            estado: 'PENDIENTE'
-          }
-        });
-
-        await tx.inscripciones_deudas_link.create({
-          data: {
-            inscripcion_id: nuevaInscripcion.id,
-            cuenta_id: nuevaCuenta.id,
-            monto_asignado: totalCobrar,
-          }
-        });
-
-        // // Si los beneficios y descuentos aplican tambien para las clases individuales, descomentamos lo siguiente y cambiamos el valor de total_a_pagar en notificaciones y en el return
-        // const beneficiosEnCola = await tx.beneficios_pendientes.findMany({
-        //   where: { alumno_id: parseInt(alumno_id), usado: false },
-        //   include: { tipos_beneficio: true }
-        // });
-
-        // let montoActualizado = totalCobrar;
-        // for (const pendiente of beneficiosEnCola) {
-        //   const valorNominal = parseFloat(pendiente.tipos_beneficio.valor_por_defecto);
-        //   let descuentoReal = pendiente.tipos_beneficio.es_porcentaje
-        //     ? montoActualizado * (valorNominal / 100)
-        //     : valorNominal;
-
-        //   const descuentoFinal = descuentoReal > montoActualizado ? montoActualizado : descuentoReal;
-        //   montoActualizado -= descuentoFinal;
-
-        //   await tx.descuentos_aplicados.create({
-        //     data: {
-        //       cuenta_id: nuevaCuenta.id,
-        //       tipo_beneficio_id: pendiente.tipo_beneficio_id,
-        //       monto_nominal_aplicado: valorNominal,
-        //       monto_dinero_descontado: descuentoFinal,
-        //       motivo_detalle: pendiente.motivo || "Beneficio automático",
-        //       aplicado_por: pendiente.asignado_por
-        //     }
-        //   });
-        //   await tx.beneficios_pendientes.update({ where: { id: pendiente.id }, data: { usado: true } });
-        // }
-
-        // await tx.cuentas_por_cobrar.update({
-        //   where: { id: nuevaCuenta.id },
-        //   data: {
-        //     monto_final: montoActualizado,
-        //     estado: montoActualizado <= 0.01 ? 'PAGADA' : 'PENDIENTE'
-        //   }
-        // });
-
-        await tx.notificaciones.create({
-          data: {
-            alumno_id: parseInt(alumno_id),
-            titulo: '✅ Inscripción por Clase Única Generada',
-            mensaje: `Se ha reservado tu cupo. Total: S/ ${totalCobrar.toFixed(2)}.`,
-            tipo: 'SUCCESS',
-            categoria: 'SISTEMA'
-          }
-        });
-
-        return {
-          mensaje: 'Inscripción procesada exitosamente.',
-          total_a_pagar: totalCobrar,
-          inscripcion: nuevaInscripcion
-        };
       });
 
+      if (!conceptoAplicar) {
+        throw new ApiError(`⛔ No existe un plan para CLASE_UNITARIA_2026.`, 404);
+      }
+
+      const paramZ = await tx.parametros_sistema.findUnique({ where: { clave: 'TIEMPO_LIMITE_RESERVA_MIN' } });
+      const fechaLimiteZombie = new Date(Date.now() - (paramZ ? parseInt(paramZ.valor) : 20) * 60 * 1000);
+
+      const inicioReal = fecha_inicio_electiva
+        ? dayjs.tz(fecha_inicio_electiva, TZ_LIMA).hour(12).toDate()
+        : dayjs.tz(TZ_LIMA).hour(12).toDate();
+
+      await Validators.validarAforoHorario(tx, idHorario, fechaLimiteZombie);
+
+      const nuevaInscripcion = await tx.inscripciones.create({
+        data: {
+          alumno_id: parseInt(alumno_id),
+          horario_id: idHorario,
+          id_grupo_transaccion: null,
+          estado: 'PENDIENTE_PAGO',
+          fecha_inscripcion: inicioReal,
+          fecha_inscripcion_original: inicioReal,
+          tipo_inscripcion: 'INDIVIDUAL',
+        },
+        include: { horarios_clases: true }
+      });
+
+      let totalCobrar = Number(conceptoAplicar.precio_base);
+      let detalleCobro = [`Plan Individual`];
+
+      // // Si en caso se puede incluir camiseta en clase individual, se descomenta.
+      // if (incluye_camiseta) {
+      //   totalCobrar += 50;
+      //   detalleCobro.push("Camiseta Oficial Gema");
+      // }
+
+      const nuevaCuenta = await tx.cuentas_por_cobrar.create({
+        data: {
+          alumno_id: parseInt(alumno_id),
+          concepto_id: conceptoAplicar.id,
+          monto_final: totalCobrar,
+          detalle_adicional: detalleCobro.join(' | '),
+          fecha_vencimiento: dayjs().tz(TZ_LIMA).add(2, 'day').endOf('day').toDate(), // 48 horas de reserva
+          estado: 'PENDIENTE'
+        }
+      });
+
+      await tx.inscripciones_deudas_link.create({
+        data: {
+          inscripcion_id: nuevaInscripcion.id,
+          cuenta_id: nuevaCuenta.id,
+          monto_asignado: totalCobrar,
+        }
+      });
+
+      // // Si los beneficios y descuentos aplican tambien para las clases individuales, descomentamos lo siguiente y cambiamos el valor de total_a_pagar en notificaciones y en el return
+      // const beneficiosEnCola = await tx.beneficios_pendientes.findMany({
+      //   where: { alumno_id: parseInt(alumno_id), usado: false },
+      //   include: { tipos_beneficio: true }
+      // });
+
+      // let montoActualizado = totalCobrar;
+      // for (const pendiente of beneficiosEnCola) {
+      //   const valorNominal = parseFloat(pendiente.tipos_beneficio.valor_por_defecto);
+      //   let descuentoReal = pendiente.tipos_beneficio.es_porcentaje
+      //     ? montoActualizado * (valorNominal / 100)
+      //     : valorNominal;
+
+      //   const descuentoFinal = descuentoReal > montoActualizado ? montoActualizado : descuentoReal;
+      //   montoActualizado -= descuentoFinal;
+
+      //   await tx.descuentos_aplicados.create({
+      //     data: {
+      //       cuenta_id: nuevaCuenta.id,
+      //       tipo_beneficio_id: pendiente.tipo_beneficio_id,
+      //       monto_nominal_aplicado: valorNominal,
+      //       monto_dinero_descontado: descuentoFinal,
+      //       motivo_detalle: pendiente.motivo || "Beneficio automático",
+      //       aplicado_por: pendiente.asignado_por
+      //     }
+      //   });
+      //   await tx.beneficios_pendientes.update({ where: { id: pendiente.id }, data: { usado: true } });
+      // }
+
+      // await tx.cuentas_por_cobrar.update({
+      //   where: { id: nuevaCuenta.id },
+      //   data: {
+      //     monto_final: montoActualizado,
+      //     estado: montoActualizado <= 0.01 ? 'PAGADA' : 'PENDIENTE'
+      //   }
+      // });
+
+      await tx.notificaciones.create({
+        data: {
+          alumno_id: parseInt(alumno_id),
+          titulo: '✅ Inscripción por Clase Única Generada',
+          mensaje: `Se ha reservado tu cupo. Total: S/ ${totalCobrar.toFixed(2)}.`,
+          tipo: 'SUCCESS',
+          categoria: 'SISTEMA'
+        }
+      });
+
+      return {
+        mensaje: 'Inscripción procesada exitosamente.',
+        total_a_pagar: totalCobrar,
+        inscripcion: nuevaInscripcion
+      };
+    }
+
+    try {
+      if (tx) {
+        return await ejecutar(tx);
+      }
+      return await prisma.$transaction(ejecutar);
     } catch (error) {
       console.error(`❌ [FALLO DURANTE INSCRIPCIÓN INDIVIDUAL] Alumno: ${alumno_id} | ${error.message}`);
       throw error;
+    }
+  },
+
+  inscribirIndividualByAdmin: async (data) => {
+    try {
+      return await prisma.$transaction(async (tx) => {
+        let results = [];
+        for (const d of data) {
+          const {
+            alumno_id, idHorario, fecha_inicio_electiva,
+            metodo_pago, codigo_operacion,
+            usuario_admin_id
+          } = d;
+
+          const dataInsc = await inscripcionService.inscribirIndividual({ alumno_id: Number(alumno_id), idHorario: Number(idHorario), fecha_inicio_electiva }, tx);
+
+          const deuda = await tx.inscripciones_deudas_link.findFirst({
+            where: { inscripcion_id: dataInsc.inscripcion.id }
+          })
+          if (!deuda) throw new ApiError('Error durante la inscripción individual.', 404);
+          const deuda_id = deuda.cuenta_id;
+          const monto = deuda.monto_asignado;
+
+          const dataPago = await pagosService.registrarPago({ deuda_id, monto, metodo_pago: Number(metodo_pago), codigo_operacion }, tx);
+
+          const pago_id = dataPago.pago.id;
+          const accion = 'APROBAR';
+          const notas = 'Inscripción por clase única y pago realizados desde rol admin.'
+
+          const resultado = await pagosService.validarPago({ pago_id, accion, usuario_admin_id: Number(usuario_admin_id), notas }, tx);
+
+          results.push(resultado)
+        }
+        return results;
+      })
+    } catch (e) {
+      if (e instanceof ApiError) throw e;
+      if (e instanceof PrismaClientKnownRequestError) throw new ApiError(e.message, 400, { prismaCode: e.code, meta: e.meta });
+      throw new ApiError(e instanceof Error ? e.message : 'Error Interno', 500);
     }
   }
 };
