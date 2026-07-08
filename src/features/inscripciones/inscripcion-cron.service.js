@@ -111,6 +111,58 @@ class InscripcionCronService {
     }
   }
 
+  async gestionarVencimientosIndividual() {
+    const hoyLima = dayjs().tz('America/Lima').startOf('day');
+    logger.info(`Iniciando revisión de inscripciones individuales. Hoy: ${hoyLima.format('YYYY-MM-DD')}`);
+
+    try {
+      const inscripcionesActivas = await prisma.inscripciones.findMany({
+        where: { estado: 'ACTIVO', tipo_inscripcion: 'INDIVIDUAL' },
+        include: {
+          registros_asistencia: {
+            select: {
+              fecha: true,
+            },
+            take: 1,
+            orderBy: {
+              fecha: 'desc'
+            }
+          }
+        }
+      });
+
+      let totalFinalizados = 0;
+
+      for (const insc of inscripcionesActivas) {
+        try {
+          if (!insc.registros_asistencia[0]) continue;
+          const fechaInicio = dayjs(insc.registros_asistencia[0].fecha.toISOString().slice(0, 10)).startOf('day');
+
+          const diasTranscurridos = hoyLima.diff(fechaInicio, 'day');
+
+          if (diasTranscurridos >= 1) {
+            await prisma.inscripciones.update({
+              where: { id: insc.id },
+              data: {
+                estado: 'FINALIZADO',
+                actualizado_en: new Date(),
+              }
+            });
+
+            totalFinalizados++;
+            logger.info(`[VENCIMIENTO INDIVIDUAL] ✅ Slot ${insc.id} liquidado (Días transcurridos: ${diasTranscurridos}).`);
+          }
+        } catch (innerError) {
+          logger.error(`[VENCIMIENTO INDIVIDUAL ERROR] ID ${insc.id}: ${innerError.message}`);
+        }
+      }
+
+      logger.info(`[VENCIMIENTO INDIVIDUAL] Proceso terminado. Total cerrados: ${totalFinalizados}`);
+    } catch (error) {
+      logger.error(`[VENCIMIENTO INDIVIDUAL CRÍTICO]: ${error.message}`);
+    }
+  }
+
   async gestionarAntiguedad() {
     const hoyLima = dayjs().tz('America/Lima').startOf('day');
     logger.info(`Iniciando cambios de antiguedad en Alumnos. Hoy: ${hoyLima.format('YYYY-MM-DD')}`);
