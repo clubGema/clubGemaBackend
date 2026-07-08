@@ -54,6 +54,18 @@ export const iniciarCronJobs = () => {
     { timezone: 'America/Lima' }
   );
 
+  cron.schedule(
+    '15 1 * * *',
+    async () => {
+      logger.info(`[CRON] Iniciando revisión de antiguedad en alumnos: ${new Date().toISOString()}`);
+      try {
+        await inscripcionCronService.gestionarAntiguedad();
+      } catch (error) {
+        logger.error('[CRON ERROR] Falló la revisión:', error);
+      }
+    },
+    { timezone: 'America/Lima' }
+  );
 
   // ------------------------------------------------------------------
   // TAREA 3: EL PROFETA (Todos los días a las 00:30 AM)  30 0 * * *
