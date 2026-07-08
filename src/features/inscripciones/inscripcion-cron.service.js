@@ -94,11 +94,6 @@ class InscripcionCronService {
                 estado: 'FINALIZADO',
                 id_grupo_transaccion: null, // Limpiamos el ID de grupo
                 actualizado_en: new Date(),
-                alumnos: {
-                  update: {
-                    historial: 'Nuevo',
-                  }
-                }
               }
             });
 
@@ -113,6 +108,60 @@ class InscripcionCronService {
       logger.info(`[VERDUGO] Proceso terminado. Total cerrados: ${totalFinalizados}`);
     } catch (error) {
       logger.error(`[VERDUGO CRÍTICO]: ${error.message}`);
+    }
+  }
+
+  async gestionarAntiguedad() {
+    const hoyLima = dayjs().tz('America/Lima').startOf('day');
+    logger.info(`Iniciando cambios de antiguedad en Alumnos. Hoy: ${hoyLima.format('YYYY-MM-DD')}`);
+    try {
+      const alumnos = await prisma.alumnos.findMany({
+        where: {
+          inscripciones: {
+            none: {
+              estado: 'ACTIVO'
+            }
+          }
+        },
+        select: {
+          usuario_id: true,
+          historial: true,
+          inscripciones: {
+            take: 1,
+            orderBy: {
+              fecha_inscripcion: 'desc'
+            },
+            select: {
+              fecha_inscripcion: true
+            }
+          }
+        }
+      })
+
+      let totalCambiosAntiguedad = 0;
+
+      for (const alumno of alumnos) {
+        try {
+          if (!alumno.inscripciones[0]) continue;
+          const fechaInicio = dayjs(alumno.inscripciones[0].fecha_inscripcion).tz('America/Lima').startOf('day');
+          const diasTranscurridos = hoyLima.diff(fechaInicio, 'day');
+          if (diasTranscurridos >= 60 && alumno.historial !== 'Nuevo') {
+            await prisma.alumnos.update({
+              where: { usuario_id: alumno.usuario_id },
+              data: {
+                historial: 'Nuevo',
+              }
+            })
+            totalCambiosAntiguedad++;
+            logger.info(`[ANTIGUEDAD] Alumno ${alumno.usuario_id} marcado como NUEVO. (Días transcurridos desde su ultima inscripción: ${diasTranscurridos})`);
+          }
+        } catch (e) {
+          logger.error(`[ERROR] ID ${alumno.usuario_id}: ${e.message}`);
+        }
+      }
+      logger.info(`Total alumnos cambiados a nuevos: ${totalCambiosAntiguedad}`);
+    } catch (e) {
+      logger.error(`[ERROR CRÍTICO]: ${e.message}`);
     }
   }
 
