@@ -4,14 +4,28 @@ import { notificacionesService } from '../notificaciones/notificaciones.service.
 import { twilioProvider } from '../../shared/services/twilio.whatsapp.service.js';
 import { emailService } from '../../shared/services/brevo.email.service.js';
 
-/// 🔥 IMPORTAMOS DAYJS Y CONFIGURAMOS LIMA 🔥
+// 🔥 IMPORTAMOS EL SID DE LA PLANTILLA DESDE TUS SECRETOS 🔥
+import { TWILIO_TEMPLATE_PAGO_PARCIAL_SID,TWILIO_TEMPLATE_VENCIMIENTO_SID } from '../../config/secret.config.js';
+
+/// 🔥 IMPORTAMOS DAYJS Y CONFIGURAMOS LIMA Y ESPAÑOL 🔥
 import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc.js';
 import timezone from 'dayjs/plugin/timezone.js';
+import 'dayjs/locale/es.js'; // 👈 Importamos español
+
 dayjs.extend(utc);
 dayjs.extend(timezone);
+dayjs.locale('es'); // 👈 Activamos español globalmente
 const TZ_LIMA = 'America/Lima';
 
+// Función para dividir arreglos en lotes (chunks)
+const chunkArray = (array, size) => {
+  const result = [];
+  for (let i = 0; i < array.length; i += size) {
+    result.push(array.slice(i, i + size));
+  }
+  return result;
+};
 class InscripcionCronService {
   async limpiarReservasZombies() {
     const param = await prisma.parametros_sistema.findUnique({
@@ -314,222 +328,187 @@ class InscripcionCronService {
   // =================================================================
   // 📧📲 RECORDATORIO: 22 Días (Pagos Parciales) - Email + WhatsApp
   // =================================================================
-  async alertaMorososParciales() {
-    const hoyLimaInicioDia = dayjs().tz(TZ_LIMA).startOf('day');
-    const { TWILIO_TEMPLATE_PAGO_PARCIAL_SID } = await import('../../config/secret.config.js');
+  async  alertaMorososParcialesIndividual() {
+  const hoyLimaInicioDia = dayjs().tz(TZ_LIMA).startOf('day');
 
-    const morososParciales = await prisma.cuentas_por_cobrar.findMany({
-      where: { estado: 'PARCIAL' },
-      select: { alumno_id: true },
-      distinct: ['alumno_id'],
-    });
-
-    if (morososParciales.length === 0) return;
-
-    let totalEmails = 0;
-    let totalWhatsApp = 0;
-
-    for (const { alumno_id } of morososParciales) {
-      const inscripcionMadre = await prisma.inscripciones.findFirst({
-        where: { alumno_id: alumno_id, estado: 'ACTIVO' },
-        orderBy: { fecha_inscripcion: 'asc' },
+  // 1. Buscamos a través de la tabla intermedia (EL PUENTE)
+  const enlacesDeuda = await prisma.inscripciones_deudas_link.findMany({
+    where: {
+      cuentas_por_cobrar: { estado: 'PARCIAL' }
+    },
+    include: {
+      inscripciones: true,
+      cuentas_por_cobrar: {
         include: {
           alumnos: {
-            include: { usuarios: true },
-          },
-        },
-      });
-
-      if (!inscripcionMadre) continue;
-
-      const diaAviso22 = dayjs(inscripcionMadre.fecha_inscripcion)
-        .tz(TZ_LIMA)
-        .add(22, 'day')
-        .startOf('day');
-
-      if (hoyLimaInicioDia.valueOf() === diaAviso22.valueOf()) {
-        const usuario = inscripcionMadre.alumnos.usuarios;
-        if (!usuario) continue;
-
-        // =============================================
-        // 📧 EMAIL: Siempre se intenta (gratis)
-        // =============================================
-        if (usuario.email) {
-          try {
-            await emailService.sendPartialPaymentReminder(usuario.email, usuario.nombres);
-            totalEmails++;
-          } catch (err) {
-            logger.error(
-              `[EMAIL ERROR] No se pudo enviar el recordatorio del día 22 al correo ${usuario.email}`,
-              err
-            );
-          }
-        }
-
-        // =============================================
-        // 📲 WHATSAPP: Plantilla HX... o texto directo
-        // =============================================
-        if (usuario.telefono_personal) {
-          try {
-            let resultadoWA = { success: false, sid: null };
-            if (TWILIO_TEMPLATE_PAGO_PARCIAL_SID) {
-              const variables = { 1: usuario.nombres };
-              resultadoWA = await twilioProvider.sendTemplateMessage(
-                usuario.telefono_personal,
-                TWILIO_TEMPLATE_PAGO_PARCIAL_SID,
-                variables
-              );
-            } else {
-              const mensaje = `Hola ${usuario.nombres}, te recordamos que tienes un saldo pendiente (pago parcial) en Club Gema. Por favor regularízalo antes del cierre de tu ciclo para no perder tus beneficios.`;
-              resultadoWA = await twilioProvider.sendWhatsAppMessage(
-                usuario.telefono_personal,
-                mensaje
-              );
-            }
-
-            if (resultadoWA.success) {
-              totalWhatsApp++;
-            } else {
-              logger.warn(
-                `[WA WARN] Recordatorio parcial no enviado a ${usuario.telefono_personal} (sin éxito confirmado).`
-              );
-            }
-          } catch (err) {
-            logger.error(
-              `[WA ERROR] No se pudo enviar recordatorio parcial a ${usuario.telefono_personal}`,
-              err
-            );
+            include: { usuarios: true }
           }
         }
       }
     }
+  });
 
-    if (totalEmails > 0 || totalWhatsApp > 0) {
-      logger.info(
-        `[RECORDATORIO 22 DIAS] Enviados: ${totalEmails} emails + ${totalWhatsApp} WhatsApps a morosos parciales.`
-      );
+  if (enlacesDeuda.length === 0) return;
+
+  const enviosPendientes = [];
+
+  // 2. Filtramos cuáles realmente cumplen 22 días HOY
+  for (const enlace of enlacesDeuda) {
+    const inscripcion = enlace.inscripciones;
+    const cuenta = enlace.cuentas_por_cobrar;
+    const usuario = cuenta.alumnos?.usuarios;
+
+    if (!inscripcion || !usuario || !usuario.telefono_personal) continue;
+
+    // Calculamos el día 22 de ESTA inscripción en específico
+    const diaAviso22 = dayjs(inscripcion.fecha_inscripcion)
+      .tz(TZ_LIMA)
+      .add(22, 'day')
+      .startOf('day');
+
+    if (hoyLimaInicioDia.valueOf() === diaAviso22.valueOf()) {
+      
+      // Calculamos la fecha de corte (Ej: Si se inscribió el 5 de Mayo, vence el 5 de Junio)
+      // Formato: "05 de junio"
+      const fechaCorte = dayjs(inscripcion.fecha_inscripcion)
+        .tz(TZ_LIMA)
+        .add(1, 'month')
+        .format('DD [de] MMMM');
+
+      // Alternativa: Si prefieres usar la fecha de vencimiento real de la cuenta por cobrar:
+      // const fechaCorte = dayjs(cuenta.fecha_vencimiento).tz(TZ_LIMA).format('DD [de] MMMM');
+
+      enviosPendientes.push({
+        telefono: usuario.telefono_personal,
+        variables: {
+          '1': usuario.nombres,    // {{1}} Nombre del alumno
+          '2': fechaCorte          // {{2}} Fecha de corte calculada
+        }
+      });
     }
   }
 
+  if (enviosPendientes.length === 0) {
+    logger.info('[CRON] No hay morosos parciales cumpliendo 22 días hoy.');
+    return;
+  }
+
+  // 3. Sistema de envíos por lotes (Batches) para respetar límites de Twilio
+  // Twilio soporta 80/seg, nosotros enviaremos de 40 en 40 por seguridad.
+  const lotes = chunkArray(enviosPendientes, 40);
+  let totalEnviados = 0;
+
+  for (const lote of lotes) {
+    // Procesamos el lote actual en paralelo (los 40 mensajes a la vez)
+    const promesasEnvio = lote.map((envio) => 
+      twilioProvider.sendTemplateMessage(
+        envio.telefono,
+        TWILIO_TEMPLATE_PAGO_PARCIAL_SID,
+        envio.variables
+      )
+    );
+
+    const resultados = await Promise.all(promesasEnvio);
+    
+    // Contamos cuántos tuvieron éxito en este lote
+    totalEnviados += resultados.filter(r => r.success).length;
+
+    // Pausa de 1 segundo antes de enviar el siguiente lote de 40
+    if (lotes.length > 1) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+  }
+
+  logger.info(`[RECORDATORIO PARCIAL INDIVIDUAL] Enviados ${totalEnviados} WhatsApps exitosamente usando la plantilla.`);
+}
+
+
   // =================================================================
-  // 📲 ALERTA VENCIMIENTO INMINENTE: 29 Días + Tolerancia - 1 (WhatsApp Plantilla)
+  // 📲 ALERTA VENCIMIENTO INMINENTE: Día 29 de su ciclo (1 día antes)
   // =================================================================
   async alertaVencimientoInminenteWhatsApp() {
     const hoyLimaInicioDia = dayjs().tz(TZ_LIMA).startOf('day');
-    const { TWILIO_TEMPLATE_VENCIMIENTO_SID } = await import('../../config/secret.config.js');
 
-    const paramTolerancia = await prisma.parametros_sistema.findUnique({
-      where: { clave: 'DIAS_TOLERANCIA_VENCIMIENTO' },
+    // 1. Buscamos DIRECTAMENTE las inscripciones ACTIVAS
+    // Ignoramos completamente si tienen deuda o no, solo nos importa su ciclo actual.
+    const inscripcionesActivas = await prisma.inscripciones.findMany({
+      where: {
+        estado: 'ACTIVO'
+      },
+      include: {
+        alumnos: {
+          include: { usuarios: true }
+        }
+      }
     });
-    const diasTolerancia = paramTolerancia ? Number.parseInt(paramTolerancia.valor) : 5;
 
-    const rebeldes = await prisma.cuentas_por_cobrar.findMany({
-      where: { estado: 'PENDIENTE' },
-      select: { alumno_id: true },
-      distinct: ['alumno_id'],
-    });
+    if (inscripcionesActivas.length === 0) return;
 
-    if (rebeldes.length === 0) return;
+    const enviosPendientes = [];
 
-    const candidatosAlerta = [];
+    // 2. Filtramos cuáles cumplen exactamente 29 días HOY
+    for (const inscripcion of inscripcionesActivas) {
+      const usuario = inscripcion.alumnos?.usuarios;
 
-    for (const { alumno_id } of rebeldes) {
-      const inscripcionMadre = await prisma.inscripciones.findFirst({
-        where: { alumno_id: alumno_id, estado: 'ACTIVO' },
-        orderBy: { fecha_inscripcion: 'asc' },
-        include: {
-          alumnos: {
-            include: { usuarios: true },
-          },
-        },
-      });
+      // Validamos que exista el usuario y tenga teléfono
+      if (!usuario || !usuario.telefono_personal) continue;
 
-      if (!inscripcionMadre) continue;
-
-      const fechaLimiteMuerte = dayjs(inscripcionMadre.fecha_inscripcion)
+      // Calculamos el día 29 desde su fecha de inscripción
+      const diaAviso29 = dayjs(inscripcion.fecha_inscripcion)
         .tz(TZ_LIMA)
-        .add(30 + diasTolerancia, 'day')
+        .add(29, 'day')
         .startOf('day');
 
-      const diaAlerta = fechaLimiteMuerte.subtract(1, 'day');
+      if (hoyLimaInicioDia.valueOf() === diaAviso29.valueOf()) {
+        
+        // Calculamos la fecha de corte (Día 30, su fecha exacta de renovación)
+        // Formato: "15 de julio"
+        const fechaCorte = dayjs(inscripcion.fecha_inscripcion)
+          .tz(TZ_LIMA)
+          .add(1, 'month')
+          .format('DD [de] MMMM');
 
-      if (hoyLimaInicioDia.valueOf() === diaAlerta.valueOf()) {
-        const usuario = inscripcionMadre.alumnos.usuarios;
-        if (usuario && usuario.telefono_personal) {
-          candidatosAlerta.push({
-            telefono: usuario.telefono_personal,
-            nombres: usuario.nombres,
-            // MEJORA #6: Guardamos la fecha límite calculada para poder usarla como variable
-            // en la plantilla de Twilio si el template la requiere (ej: variable "2")
-            fechaLimite: fechaLimiteMuerte.format('DD/MM/YYYY'),
-          });
-        }
+        enviosPendientes.push({
+          telefono: usuario.telefono_personal,
+          variables: {
+            '1': usuario.nombres,    // {{1}} Nombre del alumno
+            '2': fechaCorte          // {{2}} Fecha en que vence su mensualidad
+          }
+        });
       }
     }
 
-    if (candidatosAlerta.length === 0) return;
-
-    logger.info(
-      `[ALERTA VENCIMIENTO] Procesando ${candidatosAlerta.length} alertas inminentes en lotes...`
-    );
-
-    const LIMITE_CONCURRENCIA = 10;
-    const resultados = [];
-
-    for (let i = 0; i < candidatosAlerta.length; i += LIMITE_CONCURRENCIA) {
-      const lote = candidatosAlerta.slice(i, i + LIMITE_CONCURRENCIA);
-
-      const promesasLote = lote.map(async (candidato) => {
-        let resultado = { success: false, sid: null };
-
-        if (TWILIO_TEMPLATE_VENCIMIENTO_SID) {
-          // 🚀 PRODUCCIÓN: Plantilla oficial aprobada por Meta
-          // MEJORA #6: Variables construidas con la data disponible.
-          // Ajusta las keys ("1", "2", etc.) según las variables de tu plantilla en Twilio.
-          const variables = {
-            1: candidato.nombres,
-            2: candidato.fechaLimite, // Disponible si tu plantilla usa una segunda variable
-          };
-          // MEJORA #7: Capturamos el objeto { success, sid } que ahora retorna el provider
-          resultado = await twilioProvider.sendTemplateMessage(
-            candidato.telefono,
-            TWILIO_TEMPLATE_VENCIMIENTO_SID,
-            variables
-          );
-        } else {
-          // 🧪 SIN PLANTILLA: Envía el mensaje escrito directamente en el backend
-          const mensaje = `¡Atención ${candidato.nombres}! Tu inscripción en Club Gema está por vencer mañana. Para no perder tu cupo y tus beneficios de alumno antiguo, por favor regulariza tu pago pendiente hoy mismo.`;
-          resultado = await twilioProvider.sendWhatsAppMessage(candidato.telefono, mensaje);
-        }
-
-        // MEJORA #7: Si el envío fue exitoso y tenemos SID, aquí puedes persistirlo en DB.
-        // Ejemplo (descomenta y adapta la tabla según tu schema):
-        // if (resultado.success && resultado.sid) {
-        //   await prisma.notificaciones_externas.create({
-        //     data: {
-        //       alumno_id: candidato.alumno_id, // Asegúrate de incluir alumno_id en candidatosAlerta
-        //       canal: 'WHATSAPP',
-        //       tipo: 'ALERTA_VENCIMIENTO',
-        //       sid_externo: resultado.sid,
-        //       enviado_en: new Date(),
-        //     }
-        //   });
-        // }
-
-        return resultado;
-      });
-
-      const chunkResults = await Promise.allSettled(promesasLote);
-      resultados.push(...chunkResults);
+    if (enviosPendientes.length === 0) {
+      logger.info('[CRON] No hay inscripciones activas cumpliendo 29 días hoy.');
+      return;
     }
 
-    const exitosos = resultados.filter((r) => r.status === 'fulfilled' && r.value.success).length;
+    // 3. Sistema de envíos por lotes (Batches)
+    const lotes = chunkArray(enviosPendientes, 40);
+    let totalEnviados = 0;
 
-    if (exitosos > 0) {
-      logger.info(
-        `[ALERTA VENCIMIENTO] Se enviaron exitosamente ${exitosos}/${candidatosAlerta.length} alertas por WhatsApp.`
+    for (const lote of lotes) {
+      // Procesamos el lote actual en paralelo
+      const promesasEnvio = lote.map((envio) => 
+        twilioProvider.sendTemplateMessage(
+          envio.telefono,
+          TWILIO_TEMPLATE_VENCIMIENTO_SID, // 👈 Usamos tu plantilla de aviso de vencimiento
+          envio.variables
+        )
       );
+
+      const resultados = await Promise.all(promesasEnvio);
+      
+      // Contamos éxitos
+      totalEnviados += resultados.filter(r => r.success).length;
+
+      // Pausa de 1 segundo para no saturar Twilio
+      if (lotes.length > 1) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
     }
+
+    logger.info(`[ALERTA RENOVACIÓN] Enviados ${totalEnviados} WhatsApps exitosamente.`);
   }
 }
 

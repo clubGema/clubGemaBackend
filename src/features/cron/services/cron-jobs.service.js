@@ -116,12 +116,12 @@ export const iniciarCronJobs = () => {
   );
 
   // ------------------------------------------------------------------
-  // TAREA 5: EL FESTEJERO (Todos los días a las 12:00 PM)
-  // Objetivo: Enviar mensajes de Feliz Cumpleaños.
+  // TAREA 5: EL FESTEJERO (Todos los días a las 12:00 PM) 30 8 * * *
+  // Objetivo: Enviar mensajes de Feliz Cumpleaños. TWILIO
   // ------------------------------------------------------------------
 
   cron.schedule(
-    '30 8 * * *',
+    '* * * * *',
     async () => {
       logger.info(`[CRON] Buscando cumpleañeros de hoy: ${new Date().toISOString()}`);
       try {
@@ -147,7 +147,7 @@ export const iniciarCronJobs = () => {
     { timezone: 'America/Lima' }
   );
 
-  // ------------------------------------------------------------------
+  // ------------------------------------------------------------------ TWILIO
   // TAREA NUEVA: EL LIQUIDADOR DE PARCIALES (Todos los días a las 00:15 AM) 15 0 * * *
   // Objetivo: Matar inscripciones con pagos parciales justo antes de que el Profeta les genere nueva deuda.
   // ------------------------------------------------------------------
@@ -164,16 +164,22 @@ export const iniciarCronJobs = () => {
   //   { timezone: 'America/Lima' }
   // );
 
+
+
+
+
+
+
   // ------------------------------------------------------------------
   // TAREA NUEVA: RECORDATORIO 22 DÍAS (Todos los días a las 10:00 AM) 0 10 * * *
-  // Objetivo: Enviar WhatsApp a morosos parciales exactamente 22 días después de su inscripción
+  // Objetivo: Enviar WhatsApp a morosos parciales exactamente 22 días después de su inscripción TWILIO
   // ------------------------------------------------------------------
   cron.schedule(
     '0 10 * * *',
     async () => {
       logger.info(`[CRON] Buscando morosos parciales para recordatorio del día 22...`);
       try {
-        await inscripcionCronService.alertaMorososParciales();
+        await inscripcionCronService.alertaMorososParcialesIndividual();
       } catch (error) {
         logger.error('[CRON ERROR] Falló el Recordatorio 22 Días:', error);
       }
@@ -183,10 +189,10 @@ export const iniciarCronJobs = () => {
 
   // ------------------------------------------------------------------
   // TAREA NUEVA: ALERTA VENCIMIENTO INMINENTE (Todos los dias a las 3:30 PM) 30 15 * * *
-  // Objetivo: Enviar WhatsApp 1 día antes de que se cumplan los 30 días + tolerancia.
+  // Objetivo: Enviar WhatsApp 1 día antes de que se cumplan los 30 días + tolerancia. TWILIO
   // ------------------------------------------------------------------
   cron.schedule(
-    '30 10 * * *',
+    '30 15 * * *',
     async () => {
       logger.info(`[CRON] Buscando alumnos con vencimiento inminente...`);
       try {
