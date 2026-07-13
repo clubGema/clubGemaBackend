@@ -992,7 +992,108 @@ export const inscripcionService = {
       if (e instanceof PrismaClientKnownRequestError) throw new ApiError(e.message, 400, { prismaCode: e.code, meta: e.meta });
       throw new ApiError(e instanceof Error ? e.message : 'Error Interno', 500);
     }
-  }
+  },
+  // =================================================================
+  // 📊 HISTORIAL HÍBRIDO (INSCRIPCIONES + MESES COBRADOS)
+  // =================================================================
+  obtenerHistorialCiclosAlumno: async (alumnoId) => {
+    try {
+      // 1. Buscamos todas las inscripciones del alumno y sus deudas asociadas
+      const inscripcionesBrutas = await prisma.inscripciones.findMany({
+        where: { alumno_id: parseInt(alumnoId) },
+        include: {
+          horarios_clases: {
+            include: {
+              canchas: { include: { sedes: true } },
+              niveles_entrenamiento: true,
+              coordinadores: { include: { usuarios: true } } // Útil para mostrar el profe en el front
+            }
+          },
+          // Traemos los links de deudas ordenados por fecha de creación (ascendente)
+          inscripciones_deudas_link: {
+            include: {
+              cuentas_por_cobrar: true
+            },
+            orderBy: {
+              creado_en: 'asc'
+            }
+          }
+        },
+        orderBy: {
+          fecha_inscripcion: 'desc' // Las inscripciones más recientes primero
+        }
+      });
+
+      const historialMeses = [];
+
+      // 2. Procesamos cada inscripción para extraer sus "Meses" (Ciclos)
+      for (const inscripcion of inscripcionesBrutas) {
+        const hc = inscripcion.horarios_clases;
+        const linksDeuda = inscripcion.inscripciones_deudas_link;
+
+        // Si la inscripción no tiene cuentas por cobrar generadas, igual la mostramos como el mes inicial
+        if (linksDeuda.length === 0) {
+          historialMeses.push({
+            inscripcion_id: inscripcion.id,
+            estado_inscripcion: inscripcion.estado,
+            sede: hc?.canchas?.sedes?.nombre || 'S/D',
+            nivel: hc?.niveles_entrenamiento?.nombre || 'S/D',
+            profesor: hc?.coordinadores?.usuarios?.nombres || 'S/D',
+            tipo_inscripcion: inscripcion.tipo_inscripcion,
+            
+            // Datos del Mes
+            numero_mes_ciclo: 1,
+            fecha_inicio_ciclo: inscripcion.fecha_inscripcion,
+            fecha_corte_ciclo: null, // No hay deuda, no sabemos el corte exacto
+            estado_pago_mes: 'SIN_CUENTA',
+            monto_mes: 0,
+            cuenta_id: null
+          });
+          continue;
+        }
+
+        // Si tiene deudas, iteramos sobre cada una representando un "Mes"
+        linksDeuda.forEach((link, index) => {
+          const cuenta = link.cuentas_por_cobrar;
+          
+          // Lógica de fechas
+          // El mes 1 inicia con la fecha de la inscripción.
+          // Los meses siguientes inician con la fecha de vencimiento de la cuenta anterior.
+          let fechaInicioCiclo = inscripcion.fecha_inscripcion;
+          if (index > 0) {
+            fechaInicioCiclo = linksDeuda[index - 1].cuentas_por_cobrar.fecha_vencimiento;
+          }
+
+          historialMeses.push({
+            inscripcion_id: inscripcion.id,
+            estado_inscripcion: inscripcion.estado, // ACTIVO, INACTIVO, etc.
+            sede: hc?.canchas?.sedes?.nombre || 'S/D',
+            nivel: hc?.niveles_entrenamiento?.nombre || 'S/D',
+            profesor: hc?.coordinadores?.usuarios?.nombres || 'S/D',
+            tipo_inscripcion: inscripcion.tipo_inscripcion,
+            
+            // Datos del Mes
+            numero_mes_ciclo: index + 1, // 1 para el primer mes, 2 para la renovación, etc.
+            fecha_inicio_ciclo: fechaInicioCiclo,
+            fecha_corte_ciclo: cuenta.fecha_vencimiento,
+            estado_pago_mes: cuenta.estado, // PAGADO, PENDIENTE, VENCIDO
+            monto_mes: Number(link.monto_asignado),
+            cuenta_id: cuenta.id
+          });
+        });
+      }
+
+      // 3. Ordenar el resultado final (opcional, pero ayuda al front)
+      // Ordenamos por la fecha de inicio del ciclo descendente (lo más nuevo arriba)
+      historialMeses.sort((a, b) => new Date(b.fecha_inicio_ciclo) - new Date(a.fecha_inicio_ciclo));
+
+      return historialMeses;
+
+    } catch (error) {
+      console.error(`❌ [ERROR OBTENER HISTORIAL MESES] Alumno: ${alumnoId} | ${error.message}`);
+      throw new ApiError('Error al obtener el historial de ciclos del alumno', 500);
+    }
+  },
 };
 
 

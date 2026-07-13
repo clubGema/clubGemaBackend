@@ -1,5 +1,8 @@
 import { inscripcionService } from './inscripcion.service.js';
 import { apiResponse } from '../../shared/utils/response.util.js';
+import { inscripcionReporteService } from './inscripcion-reporte.service.js';
+import { catchAsync } from '../../shared/utils/catchAsync.util.js';
+
 
 export const inscripcionController = {
 
@@ -291,6 +294,36 @@ export const inscripcionController = {
     } catch (e) {
       return apiResponse.error(res, { message: e.message || 'Error Interno del Servidor', status: e.statusCode || 500 });
     }
-  }
+  },
+  getHistorialCiclos: async (req, res, next) => {
+    try {
+      const { alumnoId } = req.params;
+      
+      if (!alumnoId) {
+        return res.status(400).json({ success: false, message: 'ID de alumno requerido' });
+      }
+
+      const historial = await inscripcionService.obtenerHistorialCiclosAlumno(alumnoId);
+
+      return res.status(200).json({
+        success: true,
+        data: historial,
+        message: 'Historial de ciclos obtenido correctamente'
+      });
+    } catch (error) {
+      next(error); // Pásalo a tu middleware de manejo de errores
+    }
+  },
+  getReporteIndividualesExcel: catchAsync(async (req, res) => {
+    // 1. Llamamos al servicio
+    const dataReporte = await inscripcionReporteService.getReporteIndividuales();
+    
+    // 2. Respondemos con la estructura que tu frontend espera (success + data)
+    return res.status(200).json({
+      success: true, // <--- ESTO ES LO QUE EL FRONTEND ESTÁ BUSCANDO
+      message: 'Reporte generado con éxito',
+      data: dataReporte
+    });
+  })
 
 };

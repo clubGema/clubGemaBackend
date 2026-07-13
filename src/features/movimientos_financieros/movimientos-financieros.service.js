@@ -100,33 +100,29 @@ export const movimientosFinancierosService = {
         });
     },
     obtenerResumenMensual: async (mes, anio) => {
-        const mesInt = parseInt(mes);
-        const anioInt = parseInt(anio);
+    const mesInt = parseInt(mes);
+    const anioInt = parseInt(anio);
+    const fechaInicio = new Date(anioInt, mesInt - 1, 1);
+    const fechaFin = new Date(anioInt, mesInt, 0, 23, 59, 59);
 
-        // Rango de fechas para el mes
-        const fechaInicio = new Date(anioInt, mesInt - 1, 1);
-        const fechaFin = new Date(anioInt, mesInt, 0, 23, 59, 59);
-
-        // 1. Ingresos (Pagos validados)
-        const ingresos = await prisma.pagos.findMany({
-            where: {
-                estado_validacion: 'APROBADO',
-                fecha_pago: { gte: fechaInicio, lte: fechaFin }
-            },
-            include: {
-                cuentas_por_cobrar: {
-                    include: {
-                        alumnos: {
-                            include: {
-                                usuarios: true, // <--- CLAVE: Traemos los datos del usuario para sacar su nombre
-                                inscripciones: {
-                                    include: {
-                                        horarios_clases: {
-                                            include: {
-                                                canchas: {
-                                                    include: { sedes: true }
-                                                }
-                                            }
+    // 1. Consulta desde el origen: PAGOS
+    const ingresos = await prisma.pagos.findMany({
+        where: {
+            estado_validacion: 'APROBADO',
+            fecha_pago: { gte: fechaInicio, lte: fechaFin }
+        },
+        include: {
+            cuentas_por_cobrar: {
+                include: {
+                    alumnos: { include: { usuarios: true } },
+                    inscripciones_deudas_link: { // El puente hacia inscripciones
+                        include: {
+                            inscripciones: {
+                                include: {
+                                    horarios_clases: { // El puente hacia sede y nivel
+                                        include: {
+                                            canchas: { include: { sedes: true } },
+                                            niveles_entrenamiento: true
                                         }
                                     }
                                 }
@@ -135,74 +131,38 @@ export const movimientosFinancierosService = {
                     }
                 }
             }
-        });
+        }
+    });
 
-        // 2. Movimientos Manuales (Ingresos/Egresos)
-        const manuales = await prisma.movimientos_financieros.findMany({
-            where: { fecha_movimiento: { gte: fechaInicio, lte: fechaFin } },
-            include: {
-                sedes: true,
-                administrador: {
-                    include: {
-                        usuarios: true // <--- CLAVE: Traemos los datos del usuario del administrador
-                    }
-                }
-            }
-        });
+    const reporte = {};
 
-        // 3. Estructura para el Frontend
-        const reporte = {};
+    // 2. Procesamiento descendente
+    ingresos.forEach(pago => {
+        const links = pago.cuentas_por_cobrar?.inscripciones_deudas_link || [];
+        
+        // Iteramos sobre cada link para asegurar que cada inscripción aporte su nivel/sede
+        links.forEach(link => {
+            const insc = link.inscripciones;
+            const sede = insc?.horarios_clases?.canchas?.sedes?.nombre || 'GENERAL';
+            const nivel = insc?.horarios_clases?.niveles_entrenamiento?.nombre || 'GENERAL';
 
-        // Procesar ingresos automáticos
-        ingresos.forEach(pago => {
-            const sede = pago.cuentas_por_cobrar?.alumnos?.inscripciones[0]?.horarios_clases?.canchas?.sedes?.nombre || 'GENERAL';
+            if (!reporte[sede]) reporte[sede] = { niveles: {}, egresos: [] };
+            if (!reporte[sede].niveles[nivel]) reporte[sede].niveles[nivel] = { ingresos: [] };
 
-            // Extraemos el nombre desde la relación usuarios
-            const dataUsuario = pago.cuentas_por_cobrar?.alumnos?.usuarios;
-            const nombreCompletoAlumno = dataUsuario ? `${dataUsuario.nombres} ${dataUsuario.apellidos}` : '-';
-
-            if (!reporte[sede]) reporte[sede] = { ingresos: [], egresos: [] };
-
-            reporte[sede].ingresos.push({
+            reporte[sede].niveles[nivel].ingresos.push({
                 id: pago.id,
-                concepto: pago.cuentas_por_cobrar?.detalle_adicional || 'PAGO DE CUOTA',
-                monto: pago.monto_pagado.toString(),
+                concepto: `PAGO - ${nivel} | ${0.5} FTE`,
+                monto: (pago.monto_pagado / links.length).toString(), // Prorrateamos el monto
                 fecha: pago.fecha_pago,
-                alumno: nombreCompletoAlumno, // Inyectamos el nombre real
-                registrado_por: 'SISTEMA AUTOMÁTICO'
+                alumno: pago.cuentas_por_cobrar?.alumnos?.usuarios 
+                    ? `${pago.cuentas_por_cobrar.alumnos.usuarios.nombres} ${pago.cuentas_por_cobrar.alumnos.usuarios.apellidos}` 
+                    : 'N/A'
             });
         });
+    });
 
-        // Procesar movimientos manuales
-        manuales.forEach(m => {
-            const sedeKey = m.sedes?.nombre || 'GENERAL';
-
-            if (!reporte[sedeKey]) {
-                reporte[sedeKey] = { ingresos: [], egresos: [] };
-            }
-
-            // Extraemos el nombre del administrador desde la relación usuarios
-            const dataAdmin = m.administrador?.usuarios;
-            const nombreAdmin = dataAdmin ? `${dataAdmin.nombres} ${dataAdmin.apellidos}` : (m.registrado_por ? `Admin ID: ${m.registrado_por}` : 'SISTEMA');
-
-            const formatoMovimiento = {
-                id: m.id,
-                concepto: m.concepto,
-                monto: m.monto.toString(),
-                fecha: m.fecha_movimiento,
-                alumno: '-', // Un gasto manual de caja no tiene un alumno específico
-                registrado_por: nombreAdmin // Inyectamos el nombre del administrador
-            };
-
-            if (m.tipo_movimiento === 'INGRESO') {
-                reporte[sedeKey].ingresos.push(formatoMovimiento);
-            } else {
-                reporte[sedeKey].egresos.push(formatoMovimiento);
-            }
-        });
-
-        return reporte;
-    },
+    return reporte;
+},
 
     // Eliminar un movimiento (Opcional, a veces en finanzas es mejor "anular" que borrar)
     eliminar: async (id) => {

@@ -18,6 +18,20 @@ router.patch('/:id/finalizar', inscripcionController.finalizarVoluntaria);
 // GET: Listado por alumno (CORREGIDO el nombre del controlador)
 router.get('/alumno/:alumnoId', inscripcionController.listarPorAlumno); //
 
+// GET: 🚀 NUEVA RUTA: Historial de meses/ciclos del alumno
+router.get('/alumno/:alumnoId/historial-ciclos', inscripcionController.getHistorialCiclos);
+
+// =========================================================================
+// 📊 NUEVA RUTA: REPORTE DE EXCEL (Debe ir ANTES de las rutas con /:id)
+// =========================================================================
+router.get(
+  '/reportes/individuales',
+  authenticate,
+  authorize('Administrador'), // Solo administradores pueden descargar reportes
+  inscripcionController.getReporteIndividualesExcel
+);
+
+
 // GET: Detalle de una sola inscripción
 router.get('/:id', inscripcionController.obtenerDetalle);
 

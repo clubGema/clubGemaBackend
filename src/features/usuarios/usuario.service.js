@@ -640,7 +640,6 @@ export const usuarioService = {
     // =========================================================
     const inscripcionesActivas = await prisma.inscripciones.findMany({
       where: {
-        // Asumiendo que usas un estado para saber si están activos
         estado: { in: ['ACTIVO', 'PAGADO', 'PENDIENTE_PAGO'] }
       },
       include: {
@@ -655,7 +654,6 @@ export const usuarioService = {
       }
     });
 
-    // Agrupamos la data para Recharts: { sede: 'Callao', 'BÁSICO': 15, 'AVANZADO': 5 }
     const vigentesPorSede = inscripcionesActivas.reduce((acc, insc) => {
       const sede = insc.horarios_clases?.canchas?.sedes?.nombre || 'Sin Sede';
       const nivel = insc.horarios_clases?.niveles_entrenamiento?.nombre || 'Sin Nivel';
@@ -669,64 +667,58 @@ export const usuarioService = {
     const dataGrafico1 = Object.values(vigentesPorSede);
 
     // =========================================================
-    // GRÁFICO 2: INGRESOS DIARIOS VS DESERCIONES (1 mes sin renovar)
+    // GRÁFICO 2: ACTIVOS POR MES (Basado en Pagos Aprobados)
     // =========================================================
-    const haceUnMes = new Date();
-    haceUnMes.setMonth(haceUnMes.getMonth() - 1);
-
-    // 2.1 - Ingresos Diarios (Nuevas inscripciones)
-    const ingresosDelMes = await prisma.inscripciones.findMany({
-      where: { fecha_inscripcion: { gte: haceUnMes } },
-      select: { fecha_inscripcion: true }
-    });
-
-    // 2.2 - Deserciones (Alumnos cuya ÚLTIMA inscripción fue hace más de 1 mes)
-    // Primero traemos a todos los alumnos con su última inscripción
-    const alumnos = await prisma.alumnos.findMany({
+    const añoActual = new Date().getFullYear();
+    
+    // 1. Buscamos todos los PAGOS APROBADOS del año actual
+    // e incluimos la cuenta por cobrar para obtener el alumno_id
+    const pagosDelAño = await prisma.pagos.findMany({
+      where: {
+        estado_validacion: 'APROBADO',
+        fecha_pago: {
+          gte: new Date(`${añoActual}-01-01T00:00:00.000Z`),
+          lte: new Date(`${añoActual}-12-31T23:59:59.999Z`)
+        }
+      },
       include: {
-        inscripciones: {
-          orderBy: { fecha_inscripcion: 'desc' },
-          take: 1
+        cuentas_por_cobrar: {
+          select: {
+            alumno_id: true
+          }
         }
       }
     });
 
-    const deserciones = alumnos.filter(alumno => {
-      const ultimaInsc = alumno.inscripciones[0];
-      // Si no tiene inscripción o su última fue hace más de 30 días, desertó
-      if (!ultimaInsc) return false;
-      return new Date(ultimaInsc.fecha_inscripcion) < haceUnMes;
+    const nombresMeses = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+    const mesesMap = {};
+
+    // 2. Inicializamos el mapa de los 12 meses con un Set vacío
+    nombresMeses.forEach((mes) => {
+      mesesMap[mes] = { _alumnosSet: new Set() };
     });
 
-    // Agrupamos por día para el gráfico lineal
-    const diasMap = {};
+    // 3. Iteramos los pagos y agregamos el ID del alumno al mes correspondiente
+    pagosDelAño.forEach(pago => {
+      if (!pago.fecha_pago || !pago.cuentas_por_cobrar?.alumno_id) return;
+      
+      const mesIndex = pago.fecha_pago.getMonth(); // 0 a 11
+      const nombreMes = nombresMeses[mesIndex];
 
-    // Sumamos ingresos por día
-    ingresosDelMes.forEach(insc => {
-      const dia = insc.fecha_inscripcion.toISOString().split('T')[0];
-      if (!diasMap[dia]) diasMap[dia] = { fecha: dia, ingresos: 0, deserciones: 0 };
-      diasMap[dia].ingresos += 1;
+      // Al usar un Set, si el alumno hizo 2 pagos en el mismo mes 
+      // (ej. pagó 2 conceptos distintos), solo se contará como 1 alumno activo
+      mesesMap[nombreMes]._alumnosSet.add(pago.cuentas_por_cobrar.alumno_id);
     });
 
-    // Sumamos las deserciones (las asignamos al día exacto en que cumplieron 30 días de inactividad)
-    deserciones.forEach(alumno => {
-      const fechaDesercion = new Date(alumno.inscripciones[0].fecha_inscripcion);
-      fechaDesercion.setMonth(fechaDesercion.getMonth() + 1); // El día exacto que se volvieron desertores
-
-      // Solo mostramos las deserciones que cayeron en este último mes
-      if (fechaDesercion >= haceUnMes) {
-        const dia = fechaDesercion.toISOString().split('T')[0];
-        if (!diasMap[dia]) diasMap[dia] = { fecha: dia, ingresos: 0, deserciones: 0 };
-        diasMap[dia].deserciones += 1;
-      }
-    });
-
-    // Ordenamos cronológicamente
-    const dataGrafico2 = Object.values(diasMap).sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
+    // 4. Formateamos la data final contando el tamaño del Set
+    const dataGrafico2 = nombresMeses.map(mes => ({
+      mes: mes,
+      activos: mesesMap[mes]._alumnosSet.size
+    }));
 
     return {
       vigentesPorSedeNivel: dataGrafico1,
-      ingresosVsDeserciones: dataGrafico2
+      activosPorMes: dataGrafico2
     };
   },
 
