@@ -105,7 +105,7 @@ export const movimientosFinancierosService = {
     const fechaInicio = new Date(anioInt, mesInt - 1, 1);
     const fechaFin = new Date(anioInt, mesInt, 0, 23, 59, 59);
 
-    // 1. Consulta desde el origen: PAGOS
+    // 1. Consulta desde el origen: PAGOS (Automáticos)
     const ingresos = await prisma.pagos.findMany({
         where: {
             estado_validacion: 'APROBADO',
@@ -115,11 +115,11 @@ export const movimientosFinancierosService = {
             cuentas_por_cobrar: {
                 include: {
                     alumnos: { include: { usuarios: true } },
-                    inscripciones_deudas_link: { // El puente hacia inscripciones
+                    inscripciones_deudas_link: {
                         include: {
                             inscripciones: {
                                 include: {
-                                    horarios_clases: { // El puente hacia sede y nivel
+                                    horarios_clases: {
                                         include: {
                                             canchas: { include: { sedes: true } },
                                             niveles_entrenamiento: true
@@ -136,29 +136,61 @@ export const movimientosFinancierosService = {
 
     const reporte = {};
 
-    // 2. Procesamiento descendente
+    // 2. Procesamiento de PAGOS
     ingresos.forEach(pago => {
         const links = pago.cuentas_por_cobrar?.inscripciones_deudas_link || [];
-        
-        // Iteramos sobre cada link para asegurar que cada inscripción aporte su nivel/sede
         links.forEach(link => {
             const insc = link.inscripciones;
             const sede = insc?.horarios_clases?.canchas?.sedes?.nombre || 'GENERAL';
             const nivel = insc?.horarios_clases?.niveles_entrenamiento?.nombre || 'GENERAL';
 
-            if (!reporte[sede]) reporte[sede] = { niveles: {}, egresos: [] };
+            if (!reporte[sede]) reporte[sede] = { niveles: {}, egresos: [], ingresosManuales: [] };
             if (!reporte[sede].niveles[nivel]) reporte[sede].niveles[nivel] = { ingresos: [] };
 
             reporte[sede].niveles[nivel].ingresos.push({
                 id: pago.id,
                 concepto: `PAGO - ${nivel} | ${0.5} FTE`,
-                monto: (pago.monto_pagado / links.length).toString(), // Prorrateamos el monto
+                monto: (pago.monto_pagado / links.length).toString(),
                 fecha: pago.fecha_pago,
                 alumno: pago.cuentas_por_cobrar?.alumnos?.usuarios 
                     ? `${pago.cuentas_por_cobrar.alumnos.usuarios.nombres} ${pago.cuentas_por_cobrar.alumnos.usuarios.apellidos}` 
                     : 'N/A'
             });
         });
+    });
+
+    // 3. NUEVO: Consulta de MOVIMIENTOS FINANCIEROS (Ingresos/Egresos Manuales)
+    const movimientos = await prisma.movimientos_financieros.findMany({
+        where: {
+            fecha_movimiento: { gte: fechaInicio, lte: fechaFin }
+        },
+        include: { sedes: true }
+    });
+
+    movimientos.forEach(mov => {
+        const sede = mov.sedes?.nombre || 'GENERAL';
+        
+        // Asegurar que la sede exista en el reporte
+        if (!reporte[sede]) reporte[sede] = { niveles: {}, egresos: [], ingresosManuales: [] };
+        if (!reporte[sede].egresos) reporte[sede].egresos = [];
+        if (!reporte[sede].ingresosManuales) reporte[sede].ingresosManuales = [];
+
+        if (mov.tipo_movimiento === 'INGRESO') {
+            reporte[sede].ingresosManuales.push({
+                id: mov.id,
+                concepto: mov.concepto,
+                monto: mov.monto.toString(),
+                fecha: mov.fecha_movimiento,
+                registrado_por: mov.registrado_por // Opcional: si quieres mostrar quién lo hizo
+            });
+        } else if (mov.tipo_movimiento === 'EGRESO') {
+            reporte[sede].egresos.push({
+                id: mov.id,
+                concepto: mov.concepto,
+                monto: mov.monto.toString(),
+                fecha: mov.fecha_movimiento
+            });
+        }
     });
 
     return reporte;
