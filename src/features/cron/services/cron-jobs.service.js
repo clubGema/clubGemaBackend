@@ -192,7 +192,7 @@ export const iniciarCronJobs = () => {
   // Objetivo: Enviar WhatsApp 1 día antes de que se cumplan los 30 días + tolerancia. TWILIO
   // ------------------------------------------------------------------
   cron.schedule(
-    '30 15 * * *',
+    '30 15 * * *', 
     async () => {
       logger.info(`[CRON] Buscando alumnos con vencimiento inminente...`);
       try {
