@@ -5,7 +5,7 @@ import { twilioProvider } from '../../shared/services/twilio.whatsapp.service.js
 import { emailService } from '../../shared/services/brevo.email.service.js';
 
 // 🔥 IMPORTAMOS EL SID DE LA PLANTILLA DESDE TUS SECRETOS 🔥
-import { TWILIO_TEMPLATE_PAGO_PARCIAL_SID,TWILIO_TEMPLATE_VENCIMIENTO_SID } from '../../config/secret.config.js';
+import { TWILIO_TEMPLATE_PAGO_PARCIAL_SID, TWILIO_TEMPLATE_VENCIMIENTO_SID } from '../../config/secret.config.js';
 
 /// 🔥 IMPORTAMOS DAYJS Y CONFIGURAMOS LIMA Y ESPAÑOL 🔥
 import dayjs from 'dayjs';
@@ -41,7 +41,17 @@ class InscripcionCronService {
         creado_en: { lt: horaCorte },
       },
       include: {
-        inscripciones_deudas_link: true // Traemos el link para saber qué cuenta borrar
+        inscripciones_deudas_link: {
+          orderBy: {
+            id: "desc",
+          }
+        },
+        _count: {
+          select: {
+            registros_asistencia: true,
+            congelamientos: true,
+          }
+        }
       }
     });
 
@@ -54,28 +64,38 @@ class InscripcionCronService {
           // 2. Si tiene un link al puente, hay que limpiar las dependencias de la cuenta
           if (zombie.inscripciones_deudas_link.length > 0) {
             const cuentaId = zombie.inscripciones_deudas_link[0].cuenta_id;
-
-            // PASO A: Borrar los links en el PUENTE (Esto evita el error que tuviste)
-            await tx.inscripciones_deudas_link.deleteMany({
-              where: { cuenta_id: cuentaId }
-            });
-
-            // PASO B: Borrar descuentos si existen
-            await tx.descuentos_aplicados.deleteMany({
-              where: { cuenta_id: cuentaId }
-            });
-
-            // PASO C: Borrar la CUENTA
-            await tx.cuentas_por_cobrar.delete({
+            const cuenta = await tx.cuentas_por_cobrar.findUnique({
               where: { id: cuentaId }
+            })
+
+            if (cuenta.estado === 'PENDIENTE') {
+              // PASO A: Borrar los links en el PUENTE (Esto evita el error que tuviste)
+              await tx.inscripciones_deudas_link.deleteMany({
+                where: { cuenta_id: cuentaId }
+              });
+
+              // PASO B: Borrar descuentos si existen
+              await tx.descuentos_aplicados.deleteMany({
+                where: { cuenta_id: cuentaId }
+              });
+
+              // PASO C: Borrar la CUENTA
+              await tx.cuentas_por_cobrar.delete({
+                where: { id: cuentaId }
+              });
+            }
+          }
+          if (zombie._count.registros_asistencia > 0 || zombie._count.congelamientos > 0) {
+            await tx.inscripciones.update({
+              where: { id: zombie.id },
+              data: { estado: 'ACTIVO' }
+            })
+          } else {
+            // 3. PASO FINAL: Borrar la INSCRIPCIÓN (El zombie)
+            await tx.inscripciones.delete({
+              where: { id: zombie.id }
             });
           }
-
-          // 3. PASO FINAL: Borrar la INSCRIPCIÓN (El zombie)
-          await tx.inscripciones.delete({
-            where: { id: zombie.id }
-          });
-
         });
         logger.info(`[FRANCOTIRADOR] Zombie ${zombie.id} liquidado con éxito.`);
       } catch (error) {
@@ -328,99 +348,99 @@ class InscripcionCronService {
   // =================================================================
   // 📧📲 RECORDATORIO: 22 Días (Pagos Parciales) - Email + WhatsApp
   // =================================================================
-  async  alertaMorososParcialesIndividual() {
-  const hoyLimaInicioDia = dayjs().tz(TZ_LIMA).startOf('day');
+  async alertaMorososParcialesIndividual() {
+    const hoyLimaInicioDia = dayjs().tz(TZ_LIMA).startOf('day');
 
-  // 1. Buscamos a través de la tabla intermedia (EL PUENTE)
-  const enlacesDeuda = await prisma.inscripciones_deudas_link.findMany({
-    where: {
-      cuentas_por_cobrar: { estado: 'PARCIAL' }
-    },
-    include: {
-      inscripciones: true,
-      cuentas_por_cobrar: {
-        include: {
-          alumnos: {
-            include: { usuarios: true }
+    // 1. Buscamos a través de la tabla intermedia (EL PUENTE)
+    const enlacesDeuda = await prisma.inscripciones_deudas_link.findMany({
+      where: {
+        cuentas_por_cobrar: { estado: 'PARCIAL' }
+      },
+      include: {
+        inscripciones: true,
+        cuentas_por_cobrar: {
+          include: {
+            alumnos: {
+              include: { usuarios: true }
+            }
           }
         }
       }
-    }
-  });
+    });
 
-  if (enlacesDeuda.length === 0) return;
+    if (enlacesDeuda.length === 0) return;
 
-  const enviosPendientes = [];
+    const enviosPendientes = [];
 
-  // 2. Filtramos cuáles realmente cumplen 22 días HOY
-  for (const enlace of enlacesDeuda) {
-    const inscripcion = enlace.inscripciones;
-    const cuenta = enlace.cuentas_por_cobrar;
-    const usuario = cuenta.alumnos?.usuarios;
+    // 2. Filtramos cuáles realmente cumplen 22 días HOY
+    for (const enlace of enlacesDeuda) {
+      const inscripcion = enlace.inscripciones;
+      const cuenta = enlace.cuentas_por_cobrar;
+      const usuario = cuenta.alumnos?.usuarios;
 
-    if (!inscripcion || !usuario || !usuario.telefono_personal) continue;
+      if (!inscripcion || !usuario || !usuario.telefono_personal) continue;
 
-    // Calculamos el día 22 de ESTA inscripción en específico
-    const diaAviso22 = dayjs(inscripcion.fecha_inscripcion)
-      .tz(TZ_LIMA)
-      .add(22, 'day')
-      .startOf('day');
-
-    if (hoyLimaInicioDia.valueOf() === diaAviso22.valueOf()) {
-      
-      // Calculamos la fecha de corte (Ej: Si se inscribió el 5 de Mayo, vence el 5 de Junio)
-      // Formato: "05 de junio"
-      const fechaCorte = dayjs(inscripcion.fecha_inscripcion)
+      // Calculamos el día 22 de ESTA inscripción en específico
+      const diaAviso22 = dayjs(inscripcion.fecha_inscripcion)
         .tz(TZ_LIMA)
-        .add(1, 'month')
-        .format('DD [de] MMMM');
+        .add(22, 'day')
+        .startOf('day');
 
-      // Alternativa: Si prefieres usar la fecha de vencimiento real de la cuenta por cobrar:
-      // const fechaCorte = dayjs(cuenta.fecha_vencimiento).tz(TZ_LIMA).format('DD [de] MMMM');
+      if (hoyLimaInicioDia.valueOf() === diaAviso22.valueOf()) {
 
-      enviosPendientes.push({
-        telefono: usuario.telefono_personal,
-        variables: {
-          '1': usuario.nombres,    // {{1}} Nombre del alumno
-          '2': fechaCorte          // {{2}} Fecha de corte calculada
-        }
-      });
+        // Calculamos la fecha de corte (Ej: Si se inscribió el 5 de Mayo, vence el 5 de Junio)
+        // Formato: "05 de junio"
+        const fechaCorte = dayjs(inscripcion.fecha_inscripcion)
+          .tz(TZ_LIMA)
+          .add(1, 'month')
+          .format('DD [de] MMMM');
+
+        // Alternativa: Si prefieres usar la fecha de vencimiento real de la cuenta por cobrar:
+        // const fechaCorte = dayjs(cuenta.fecha_vencimiento).tz(TZ_LIMA).format('DD [de] MMMM');
+
+        enviosPendientes.push({
+          telefono: usuario.telefono_personal,
+          variables: {
+            '1': usuario.nombres,    // {{1}} Nombre del alumno
+            '2': fechaCorte          // {{2}} Fecha de corte calculada
+          }
+        });
+      }
     }
-  }
 
-  if (enviosPendientes.length === 0) {
-    logger.info('[CRON] No hay morosos parciales cumpliendo 22 días hoy.');
-    return;
-  }
-
-  // 3. Sistema de envíos por lotes (Batches) para respetar límites de Twilio
-  // Twilio soporta 80/seg, nosotros enviaremos de 40 en 40 por seguridad.
-  const lotes = chunkArray(enviosPendientes, 40);
-  let totalEnviados = 0;
-
-  for (const lote of lotes) {
-    // Procesamos el lote actual en paralelo (los 40 mensajes a la vez)
-    const promesasEnvio = lote.map((envio) => 
-      twilioProvider.sendTemplateMessage(
-        envio.telefono,
-        TWILIO_TEMPLATE_PAGO_PARCIAL_SID,
-        envio.variables
-      )
-    );
-
-    const resultados = await Promise.all(promesasEnvio);
-    
-    // Contamos cuántos tuvieron éxito en este lote
-    totalEnviados += resultados.filter(r => r.success).length;
-
-    // Pausa de 1 segundo antes de enviar el siguiente lote de 40
-    if (lotes.length > 1) {
-      await new Promise(resolve => setTimeout(resolve, 1000));
+    if (enviosPendientes.length === 0) {
+      logger.info('[CRON] No hay morosos parciales cumpliendo 22 días hoy.');
+      return;
     }
-  }
 
-  logger.info(`[RECORDATORIO PARCIAL INDIVIDUAL] Enviados ${totalEnviados} WhatsApps exitosamente usando la plantilla.`);
-}
+    // 3. Sistema de envíos por lotes (Batches) para respetar límites de Twilio
+    // Twilio soporta 80/seg, nosotros enviaremos de 40 en 40 por seguridad.
+    const lotes = chunkArray(enviosPendientes, 40);
+    let totalEnviados = 0;
+
+    for (const lote of lotes) {
+      // Procesamos el lote actual en paralelo (los 40 mensajes a la vez)
+      const promesasEnvio = lote.map((envio) =>
+        twilioProvider.sendTemplateMessage(
+          envio.telefono,
+          TWILIO_TEMPLATE_PAGO_PARCIAL_SID,
+          envio.variables
+        )
+      );
+
+      const resultados = await Promise.all(promesasEnvio);
+
+      // Contamos cuántos tuvieron éxito en este lote
+      totalEnviados += resultados.filter(r => r.success).length;
+
+      // Pausa de 1 segundo antes de enviar el siguiente lote de 40
+      if (lotes.length > 1) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+
+    logger.info(`[RECORDATORIO PARCIAL INDIVIDUAL] Enviados ${totalEnviados} WhatsApps exitosamente usando la plantilla.`);
+  }
 
 
   // =================================================================
@@ -460,7 +480,7 @@ class InscripcionCronService {
         .startOf('day');
 
       if (hoyLimaInicioDia.valueOf() === diaAviso29.valueOf()) {
-        
+
         // Calculamos la fecha de corte (Día 30, su fecha exacta de renovación)
         // Formato: "15 de julio"
         const fechaCorte = dayjs(inscripcion.fecha_inscripcion)
@@ -489,7 +509,7 @@ class InscripcionCronService {
 
     for (const lote of lotes) {
       // Procesamos el lote actual en paralelo
-      const promesasEnvio = lote.map((envio) => 
+      const promesasEnvio = lote.map((envio) =>
         twilioProvider.sendTemplateMessage(
           envio.telefono,
           TWILIO_TEMPLATE_VENCIMIENTO_SID, // 👈 Usamos tu plantilla de aviso de vencimiento
@@ -498,7 +518,7 @@ class InscripcionCronService {
       );
 
       const resultados = await Promise.all(promesasEnvio);
-      
+
       // Contamos éxitos
       totalEnviados += resultados.filter(r => r.success).length;
 
