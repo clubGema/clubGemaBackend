@@ -2,6 +2,8 @@ import { usuarioService } from './usuario.service.js';
 import { apiResponse } from '../../shared/utils/response.util.js';
 import { catchAsync } from '../../shared/utils/catchAsync.util.js';
 import { validateRoleSpecificData } from './validators/usuario.validator.js';
+import { PrismaClient } from '@prisma/client'; // <-- 1. IMPORTAS PRISMA AQUÍ
+const prisma = new PrismaClient();
 
 export const usuarioController = {
   register: catchAsync(async (req, res) => {
