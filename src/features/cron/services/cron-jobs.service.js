@@ -25,17 +25,17 @@ export const iniciarCronJobs = () => {
   // TAREA 1: EL FRANCOTIRADOR (Cada minuto)
   // Objetivo: Eliminar inscripciones nuevas que no se pagaron en 20 min.
   // ------------------------------------------------------------------
-  cron.schedule(
-    '* * * * *',
-    async () => {
-      try {
-        await inscripcionCronService.limpiarReservasZombies();
-      } catch (error) {
-        logger.error('[CRON ERROR] Falló el Francotirador:', error);
-      }
-    },
-    { timezone: 'America/Lima' }
-  );
+  //cron.schedule(
+  //  '* * * * *',
+   // async () => {
+   //   try {
+   //     await inscripcionCronService.limpiarReservasZombies();
+    //  } catch (error) {
+    //    logger.error('[CRON ERROR] Falló el Francotirador:', error);
+    //  }
+   // },
+   // { timezone: 'America/Lima' }
+  //);
 
   // ------------------------------------------------------------------
   // TAREA 2: EL VERDUGO DE VENCIMIENTOS (Todos los días a las 00:00 AM) 0 1 * * *
