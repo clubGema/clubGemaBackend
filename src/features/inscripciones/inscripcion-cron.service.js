@@ -68,7 +68,7 @@ class InscripcionCronService {
               where: { id: cuentaId }
             })
 
-            if (cuenta.estado === 'PENDIENTE') {
+            if (cuenta?.estado === 'PENDIENTE') {
               // PASO A: Borrar los links en el PUENTE (Esto evita el error que tuviste)
               await tx.inscripciones_deudas_link.deleteMany({
                 where: { cuenta_id: cuentaId }
