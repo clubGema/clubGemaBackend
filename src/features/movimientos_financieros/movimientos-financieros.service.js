@@ -100,111 +100,114 @@ export const movimientosFinancierosService = {
         });
     },
     obtenerResumenMensual: async (mes, anio) => {
-    const mesInt = parseInt(mes);
-    const anioInt = parseInt(anio);
-    const fechaInicio = new Date(anioInt, mesInt - 1, 1);
-    const fechaFin = new Date(anioInt, mesInt, 0, 23, 59, 59);
+        const mesInt = parseInt(mes);
+        const anioInt = parseInt(anio);
+        const fechaInicio = new Date(anioInt, mesInt - 1, 1);
+        const fechaFin = new Date(anioInt, mesInt, 0, 23, 59, 59);
 
-    // 1. Consulta desde el origen: PAGOS (Automáticos)
-    const ingresos = await prisma.pagos.findMany({
-        where: {
-            estado_validacion: 'APROBADO',
-            fecha_pago: { gte: fechaInicio, lte: fechaFin }
-        },
-        include: {
-            cuentas_por_cobrar: {
-                include: {
-                    alumnos: { include: { usuarios: true } },
-                    inscripciones_deudas_link: {
-                        include: {
-                            inscripciones: {
-                                include: {
-                                    horarios_clases: {
-                                        include: {
-                                            canchas: { include: { sedes: true } },
-                                            niveles_entrenamiento: true
+        // 1. Consulta desde el origen: PAGOS (Automáticos)
+        const ingresos = await prisma.pagos.findMany({
+            where: {
+                estado_validacion: 'APROBADO',
+                fecha_pago: { gte: fechaInicio, lte: fechaFin }
+            },
+            include: {
+                cuentas_por_cobrar: {
+                    include: {
+                        alumnos: { include: { usuarios: true } },
+                        inscripciones_deudas_link: {
+                            include: {
+                                inscripciones: {
+                                    include: {
+                                        horarios_clases: {
+                                            include: {
+                                                canchas: { include: { sedes: true } },
+                                                niveles_entrenamiento: true
+                                            }
                                         }
                                     }
                                 }
+                            },
+                            orderBy: {
+                                id: "desc",
                             }
                         }
                     }
                 }
             }
-        }
-    });
+        });
 
-    const reporte = {};
+        const reporte = {};
 
-    // 2. Procesamiento de PAGOS
-    ingresos.forEach(pago => {
-        const links = pago.cuentas_por_cobrar?.inscripciones_deudas_link || [];
-        
-        // ✨ NUEVO: Capturamos el detalle_adicional para saber si es clase individual
-        const detalleAdicional = pago.cuentas_por_cobrar?.detalle_adicional || '';
-        const esPlanIndividual = detalleAdicional.toLowerCase().includes('plan individual');
-        
-        // ✨ NUEVO: Asignamos 0 FTE si es individual, caso contrario el 0.5 por defecto
-        const fteAsignado = esPlanIndividual ? 0 : 0.5;
+        // 2. Procesamiento de PAGOS
+        ingresos.forEach(pago => {
+            const links = pago.cuentas_por_cobrar?.inscripciones_deudas_link || [];
 
-        links.forEach(link => {
-            const insc = link.inscripciones;
-            const sede = insc?.horarios_clases?.canchas?.sedes?.nombre || 'GENERAL';
-            const nivel = insc?.horarios_clases?.niveles_entrenamiento?.nombre || 'GENERAL';
+            // ✨ NUEVO: Capturamos el detalle_adicional para saber si es clase individual
+            const detalleAdicional = pago.cuentas_por_cobrar?.detalle_adicional || '';
+            const esPlanIndividual = detalleAdicional.toLowerCase().includes('plan individual');
 
-            if (!reporte[sede]) reporte[sede] = { niveles: {}, egresos: [], ingresosManuales: [] };
-            if (!reporte[sede].niveles[nivel]) reporte[sede].niveles[nivel] = { ingresos: [] };
+            // ✨ NUEVO: Asignamos 0 FTE si es individual, caso contrario el 0.5 por defecto
+            const fteAsignado = esPlanIndividual ? 0 : 0.5;
 
-            reporte[sede].niveles[nivel].ingresos.push({
-                id: pago.id,
-                concepto: `PAGO - ${nivel} | ${fteAsignado} FTE`, // Ahora usa el FTE dinámico
-                monto: (pago.monto_pagado / links.length).toString(),
-                fecha: pago.fecha_pago,
-                alumno: pago.cuentas_por_cobrar?.alumnos?.usuarios 
-                    ? `${pago.cuentas_por_cobrar.alumnos.usuarios.nombres} ${pago.cuentas_por_cobrar.alumnos.usuarios.apellidos}` 
-                    : 'N/A',
-                // ✨ NUEVO: Flags que viajarán en el JSON para que el frontend los lea
-                es_plan_individual: esPlanIndividual,
-                detalle_adicional: detalleAdicional
+            links.forEach(link => {
+                const insc = link.inscripciones;
+                const sede = insc?.horarios_clases?.canchas?.sedes?.nombre || 'GENERAL';
+                const nivel = insc?.horarios_clases?.niveles_entrenamiento?.nombre || 'GENERAL';
+
+                if (!reporte[sede]) reporte[sede] = { niveles: {}, egresos: [], ingresosManuales: [] };
+                if (!reporte[sede].niveles[nivel]) reporte[sede].niveles[nivel] = { ingresos: [] };
+
+                reporte[sede].niveles[nivel].ingresos.push({
+                    id: pago.id,
+                    concepto: `PAGO - ${nivel} | ${fteAsignado} FTE`, // Ahora usa el FTE dinámico
+                    monto: (pago.monto_pagado / links.length).toString(),
+                    fecha: links?.[0]?.inscripciones?.fecha_inscripcion_original,
+                    alumno: pago.cuentas_por_cobrar?.alumnos?.usuarios
+                        ? `${pago.cuentas_por_cobrar.alumnos.usuarios.nombres} ${pago.cuentas_por_cobrar.alumnos.usuarios.apellidos}`
+                        : 'N/A',
+                    // ✨ NUEVO: Flags que viajarán en el JSON para que el frontend los lea
+                    es_plan_individual: esPlanIndividual,
+                    detalle_adicional: detalleAdicional
+                });
             });
         });
-    });
 
-    // 3. Consulta de MOVIMIENTOS FINANCIEROS (Ingresos/Egresos Manuales)
-    const movimientos = await prisma.movimientos_financieros.findMany({
-        where: {
-            fecha_movimiento: { gte: fechaInicio, lte: fechaFin }
-        },
-        include: { sedes: true }
-    });
+        // 3. Consulta de MOVIMIENTOS FINANCIEROS (Ingresos/Egresos Manuales)
+        const movimientos = await prisma.movimientos_financieros.findMany({
+            where: {
+                fecha_movimiento: { gte: fechaInicio, lte: fechaFin }
+            },
+            include: { sedes: true }
+        });
 
-    movimientos.forEach(mov => {
-        const sede = mov.sedes?.nombre || 'GENERAL';
-        
-        if (!reporte[sede]) reporte[sede] = { niveles: {}, egresos: [], ingresosManuales: [] };
-        if (!reporte[sede].egresos) reporte[sede].egresos = [];
-        if (!reporte[sede].ingresosManuales) reporte[sede].ingresosManuales = [];
+        movimientos.forEach(mov => {
+            const sede = mov.sedes?.nombre || 'GENERAL';
 
-        if (mov.tipo_movimiento === 'INGRESO') {
-            reporte[sede].ingresosManuales.push({
-                id: mov.id,
-                concepto: mov.concepto,
-                monto: mov.monto.toString(),
-                fecha: mov.fecha_movimiento,
-                registrado_por: mov.registrado_por
-            });
-        } else if (mov.tipo_movimiento === 'EGRESO') {
-            reporte[sede].egresos.push({
-                id: mov.id,
-                concepto: mov.concepto,
-                monto: mov.monto.toString(),
-                fecha: mov.fecha_movimiento
-            });
-        }
-    });
+            if (!reporte[sede]) reporte[sede] = { niveles: {}, egresos: [], ingresosManuales: [] };
+            if (!reporte[sede].egresos) reporte[sede].egresos = [];
+            if (!reporte[sede].ingresosManuales) reporte[sede].ingresosManuales = [];
 
-    return reporte;
-},
+            if (mov.tipo_movimiento === 'INGRESO') {
+                reporte[sede].ingresosManuales.push({
+                    id: mov.id,
+                    concepto: mov.concepto,
+                    monto: mov.monto.toString(),
+                    fecha: mov.fecha_movimiento,
+                    registrado_por: mov.registrado_por
+                });
+            } else if (mov.tipo_movimiento === 'EGRESO') {
+                reporte[sede].egresos.push({
+                    id: mov.id,
+                    concepto: mov.concepto,
+                    monto: mov.monto.toString(),
+                    fecha: mov.fecha_movimiento
+                });
+            }
+        });
+
+        return reporte;
+    },
 
     // Eliminar un movimiento (Opcional, a veces en finanzas es mejor "anular" que borrar)
     eliminar: async (id) => {
