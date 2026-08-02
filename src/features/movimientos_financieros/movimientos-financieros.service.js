@@ -109,7 +109,15 @@ export const movimientosFinancierosService = {
         const ingresos = await prisma.pagos.findMany({
             where: {
                 estado_validacion: 'APROBADO',
-                fecha_pago: { gte: fechaInicio, lte: fechaFin }
+                cuentas_por_cobrar: {
+                    inscripciones_deudas_link: {
+                        some: {
+                            inscripciones: {
+                                fecha_inscripcion_original: { gte: fechaInicio, lte: fechaFin }
+                            }
+                        }
+                    }
+                }
             },
             include: {
                 cuentas_por_cobrar: {
@@ -162,7 +170,7 @@ export const movimientosFinancierosService = {
                     id: pago.id,
                     concepto: `PAGO - ${nivel} | ${fteAsignado} FTE`, // Ahora usa el FTE dinámico
                     monto: (pago.monto_pagado / links.length).toString(),
-                    fecha: links?.[0]?.inscripciones?.fecha_inscripcion_original,
+                    fecha: pago.fecha_pago,
                     alumno: pago.cuentas_por_cobrar?.alumnos?.usuarios
                         ? `${pago.cuentas_por_cobrar.alumnos.usuarios.nombres} ${pago.cuentas_por_cobrar.alumnos.usuarios.apellidos}`
                         : 'N/A',
