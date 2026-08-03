@@ -144,7 +144,7 @@ export const alumnoService = {
       const inscripcionesProcesadas = inscripcionesOrdenadas.map(ins => {
         const h = ins.horarios_clases;
         const fechaCorte = new Date(ins.fecha_inscripcion);
-        fechaCorte.setDate(fechaCorte.getDate() + 30); // ✅ REGLA 30 DÍAS
+        fechaCorte.setDate(fechaCorte.getDate() + 29);
 
         return {
           inscripcion_id: ins.id,
