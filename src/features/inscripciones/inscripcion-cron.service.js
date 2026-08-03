@@ -392,7 +392,7 @@ class InscripcionCronService {
         // Formato: "05 de junio"
         const fechaCorte = dayjs(inscripcion.fecha_inscripcion)
           .tz(TZ_LIMA)
-          .add(1, 'month')
+          .add(29, 'day')
           .format('DD [de] MMMM');
 
         // Alternativa: Si prefieres usar la fecha de vencimiento real de la cuenta por cobrar:
@@ -485,7 +485,7 @@ class InscripcionCronService {
         // Formato: "15 de julio"
         const fechaCorte = dayjs(inscripcion.fecha_inscripcion)
           .tz(TZ_LIMA)
-          .add(1, 'month')
+          .add(29, 'day')
           .format('DD [de] MMMM');
 
         enviosPendientes.push({
