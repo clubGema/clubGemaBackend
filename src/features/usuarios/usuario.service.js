@@ -517,6 +517,7 @@ export const usuarioService = {
               select: {
                 estado: true,
                 fecha_inscripcion: true,
+                tipo_inscripcion: true,
                 horarios_clases: {
                   select: {
                     hora_inicio: true,
@@ -634,7 +635,7 @@ export const usuarioService = {
     });
   },
 
-  
+
 
   getUserByDni: async (dni) => {
     return await prisma.usuarios.findFirst({
