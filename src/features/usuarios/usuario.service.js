@@ -634,93 +634,7 @@ export const usuarioService = {
     });
   },
 
-  getGraficosAvanzados: async () => {
-    // =========================================================
-    // GRÁFICO 1: ALUMNOS VIGENTES POR SEDE Y NIVEL
-    // =========================================================
-    const inscripcionesActivas = await prisma.inscripciones.findMany({
-      where: {
-        estado: { in: ['ACTIVO', 'PAGADO', 'PENDIENTE_PAGO'] }
-      },
-      include: {
-        horarios_clases: {
-          include: {
-            niveles_entrenamiento: { select: { nombre: true } },
-            canchas: {
-              include: { sedes: { select: { nombre: true } } }
-            }
-          }
-        }
-      }
-    });
-
-    const vigentesPorSede = inscripcionesActivas.reduce((acc, insc) => {
-      const sede = insc.horarios_clases?.canchas?.sedes?.nombre || 'Sin Sede';
-      const nivel = insc.horarios_clases?.niveles_entrenamiento?.nombre || 'Sin Nivel';
-
-      if (!acc[sede]) acc[sede] = { sede };
-      acc[sede][nivel] = (acc[sede][nivel] || 0) + 1;
-
-      return acc;
-    }, {});
-
-    const dataGrafico1 = Object.values(vigentesPorSede);
-
-    // =========================================================
-    // GRÁFICO 2: ACTIVOS POR MES (Basado en Pagos Aprobados)
-    // =========================================================
-    const añoActual = new Date().getFullYear();
-    
-    // 1. Buscamos todos los PAGOS APROBADOS del año actual
-    // e incluimos la cuenta por cobrar para obtener el alumno_id
-    const pagosDelAño = await prisma.pagos.findMany({
-      where: {
-        estado_validacion: 'APROBADO',
-        fecha_pago: {
-          gte: new Date(`${añoActual}-01-01T00:00:00.000Z`),
-          lte: new Date(`${añoActual}-12-31T23:59:59.999Z`)
-        }
-      },
-      include: {
-        cuentas_por_cobrar: {
-          select: {
-            alumno_id: true
-          }
-        }
-      }
-    });
-
-    const nombresMeses = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
-    const mesesMap = {};
-
-    // 2. Inicializamos el mapa de los 12 meses con un Set vacío
-    nombresMeses.forEach((mes) => {
-      mesesMap[mes] = { _alumnosSet: new Set() };
-    });
-
-    // 3. Iteramos los pagos y agregamos el ID del alumno al mes correspondiente
-    pagosDelAño.forEach(pago => {
-      if (!pago.fecha_pago || !pago.cuentas_por_cobrar?.alumno_id) return;
-      
-      const mesIndex = pago.fecha_pago.getMonth(); // 0 a 11
-      const nombreMes = nombresMeses[mesIndex];
-
-      // Al usar un Set, si el alumno hizo 2 pagos en el mismo mes 
-      // (ej. pagó 2 conceptos distintos), solo se contará como 1 alumno activo
-      mesesMap[nombreMes]._alumnosSet.add(pago.cuentas_por_cobrar.alumno_id);
-    });
-
-    // 4. Formateamos la data final contando el tamaño del Set
-    const dataGrafico2 = nombresMeses.map(mes => ({
-      mes: mes,
-      activos: mesesMap[mes]._alumnosSet.size
-    }));
-
-    return {
-      vigentesPorSedeNivel: dataGrafico1,
-      activosPorMes: dataGrafico2
-    };
-  },
+  
 
   getUserByDni: async (dni) => {
     return await prisma.usuarios.findFirst({
@@ -732,5 +646,6 @@ export const usuarioService = {
   },
   // Rutas delegadas a servicios especialistas
   getDashboardStats: dashboardService.getDashboardStats,
+  getGraficosAvanzados: dashboardService.getGraficosAvanzados,
   getDetailedExcelReport: reporteService.getDetailedExcelReport,
 };

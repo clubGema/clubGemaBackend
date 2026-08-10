@@ -295,58 +295,68 @@ export const CuentasPorCobrarService = {
 
   // 2. MOTOR DE RENOVACIÓN: Procesa el paquete completo
   async generarRenovacionPaquete(grupoUuid, fechaInicioNueva) {
-    return await prisma.$transaction(async (tx) => {
-      const paqueteActual = await tx.inscripciones.findMany({
-        where: { id_grupo_transaccion: grupoUuid, estado: 'ACTIVO' }
-      });
+  return await prisma.$transaction(async (tx) => {
+    const paqueteActual = await tx.inscripciones.findMany({
+      where: { id_grupo_transaccion: grupoUuid, estado: 'ACTIVO' }
+    });
 
-      if (paqueteActual.length === 0) throw new Error("No hay horarios activos.");
+    if (paqueteActual.length === 0) throw new Error("No hay horarios activos.");
 
-      const esLegacy = await detectarRegimenAlumno(tx, paqueteActual[0].alumno_id)
-      const conceptoPaquete = await tx.catalogo_conceptos.findFirst({
-        where: { cantidad_clases_semanal: paqueteActual.length, activo: true, es_vigente: !esLegacy }
-      });
+    const esLegacy = await detectarRegimenAlumno(tx, paqueteActual[0].alumno_id)
+    const conceptoPaquete = await tx.catalogo_conceptos.findFirst({
+      where: { cantidad_clases_semanal: paqueteActual.length, activo: true, es_vigente: !esLegacy }
+    });
 
-      const montoTotal = Number(conceptoPaquete.precio_base);
-      const fechaOriginalParaRevertir = paqueteActual[0].fecha_inscripcion;
+    const montoTotal = Number(conceptoPaquete.precio_base);
+    const fechaOriginalParaRevertir = paqueteActual[0].fecha_inscripcion;
 
-      // 🚩 CAMBIO AQUÍ: Guardamos el "REVERTIR_A" en el detalle de la CUENTA
-      const nuevaCuenta = await tx.cuentas_por_cobrar.create({
+    const nuevaCuenta = await tx.cuentas_por_cobrar.create({
+      data: {
+        alumno_id: paqueteActual[0].alumno_id,
+        concepto_id: conceptoPaquete.id,
+        monto_final: montoTotal,
+        detalle_adicional: `RENOVACION|FECHA_ANT:${dayjs(fechaOriginalParaRevertir).format('YYYY-MM-DD')}|Ciclo:${dayjs(fechaInicioNueva).format('MMMM')}`,
+        fecha_vencimiento: dayjs().add(2, 'day').toDate(),
+        estado: 'PENDIENTE'
+      }
+    });
+
+    const montoPorSlot = montoTotal / paqueteActual.length;
+
+    // 🚩 NUEVO: cerramos el ciclo viejo ANTES del loop
+    const fechaCierre = dayjs(fechaInicioNueva).subtract(1, 'day').toDate();
+    await tx.inscripciones_deudas_link.updateMany({
+      where: {
+        inscripcion_id: { in: paqueteActual.map(i => i.id) },
+        fecha_fin_ciclo: null
+      },
+      data: { fecha_fin_ciclo: fechaCierre }
+    });
+
+    for (const ins of paqueteActual) {
+      await tx.inscripciones.update({
+        where: { id: ins.id },
         data: {
-          alumno_id: paqueteActual[0].alumno_id,
-          concepto_id: conceptoPaquete.id,
-          monto_final: montoTotal,
-          detalle_adicional: `RENOVACION|FECHA_ANT:${dayjs(fechaOriginalParaRevertir).format('YYYY-MM-DD')}|Ciclo:${dayjs(fechaInicioNueva).format('MMMM')}`,
-          fecha_vencimiento: dayjs().add(2, 'day').toDate(),
-          estado: 'PENDIENTE'
+          fecha_inscripcion: dayjs(fechaInicioNueva).toDate(),
+          fecha_inscripcion_original: dayjs(fechaInicioNueva).toDate(),
+          actualizado_en: new Date(),
+          estado: 'PENDIENTE_PAGO'
         }
       });
 
-      const montoPorSlot = montoTotal / paqueteActual.length;
+      await tx.inscripciones_deudas_link.create({
+        data: {
+          inscripcion_id: ins.id,
+          cuenta_id: nuevaCuenta.id,
+          monto_asignado: montoPorSlot,
+          fecha_inicio_ciclo: dayjs(fechaInicioNueva).toDate(),  // 🚩 NUEVO
+          fecha_fin_ciclo: null                                  // 🚩 NUEVO
+        }
+      });
+    }
 
-      for (const ins of paqueteActual) {
-        await tx.inscripciones.update({
-          where: { id: ins.id },
-          data: {
-            fecha_inscripcion: dayjs(fechaInicioNueva).toDate(),
-            fecha_inscripcion_original: dayjs(fechaInicioNueva).toDate(),
-            actualizado_en: new Date(),
-            estado: 'PENDIENTE_PAGO'
-          }
-        });
-
-        // 🚩 QUITAMOS EL CAMPO 'notas' de aquí para que no explote
-        await tx.inscripciones_deudas_link.create({
-          data: {
-            inscripcion_id: ins.id,
-            cuenta_id: nuevaCuenta.id,
-            monto_asignado: montoPorSlot
-          }
-        });
-      }
-
-      return { success: true, cuenta_id: nuevaCuenta.id };
-    });
-  }
+    return { success: true, cuenta_id: nuevaCuenta.id };
+  });
+}
 
 };

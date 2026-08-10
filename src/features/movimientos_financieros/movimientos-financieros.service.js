@@ -72,7 +72,7 @@ export const movimientosFinancierosService = {
                 metodo_pago_id: data.metodo_pago_id,
                 fecha_movimiento: data.fecha_movimiento ? new Date(data.fecha_movimiento) : new Date(),
                 comprobante_url: data.comprobante_url,
-                registrado_por: usuario_id, // ID del administrador que está haciendo la petición
+                registrado_por: usuario_id,
                 notas: data.notas,
                 sede_id: data.sede_id,
             }
@@ -95,10 +95,10 @@ export const movimientosFinancierosService = {
                 notas: data.notas,
                 sede_id: data.sede_id,
                 fecha_movimiento: data.fecha_movimiento,
-                // La fecha_movimiento y registrado_por rara vez deberían cambiar tras la creación
             }
         });
     },
+
     obtenerResumenMensual: async (mes, anio) => {
         const mesInt = parseInt(mes);
         const anioInt = parseInt(anio);
@@ -106,15 +106,16 @@ export const movimientosFinancierosService = {
         const fechaFin = new Date(anioInt, mesInt, 0, 23, 59, 59);
 
         // 1. Consulta desde el origen: PAGOS (Automáticos)
+        // Filtramos por fecha_inicio_ciclo del LINK (fecha real de inicio de clases),
+        // no por fecha_inscripcion_original de la inscripción (que se pisa en cada renovación).
+        // Esto decide SI el pago tiene actividad este mes.
         const ingresos = await prisma.pagos.findMany({
             where: {
                 estado_validacion: 'APROBADO',
                 cuentas_por_cobrar: {
                     inscripciones_deudas_link: {
                         some: {
-                            inscripciones: {
-                                fecha_inscripcion_original: { gte: fechaInicio, lte: fechaFin }
-                            }
+                            fecha_inicio_ciclo: { gte: fechaInicio, lte: fechaFin }
                         }
                     }
                 }
@@ -123,6 +124,13 @@ export const movimientosFinancierosService = {
                 cuentas_por_cobrar: {
                     include: {
                         alumnos: { include: { usuarios: true } },
+                        // 🚩 FIX: traemos TODOS los links de la cuenta, SIN filtrar por mes.
+                        // Antes solo se traían los del mes consultado, lo que hacía que el
+                        // divisor del split (links.length) fuera distinto según el mes que
+                        // consultes -> un mismo pago se contaba completo en cada mes donde
+                        // tuviera al menos un link, duplicando ingresos cuando una cuenta
+                        // tiene ciclos en meses distintos (confirmado con datos reales:
+                        // varias cuentas con links repartidos en 2 meses).
                         inscripciones_deudas_link: {
                             include: {
                                 inscripciones: {
@@ -149,16 +157,28 @@ export const movimientosFinancierosService = {
 
         // 2. Procesamiento de PAGOS
         ingresos.forEach(pago => {
-            const links = pago.cuentas_por_cobrar?.inscripciones_deudas_link || [];
+            const todosLosLinks = pago.cuentas_por_cobrar?.inscripciones_deudas_link || [];
+            if (todosLosLinks.length === 0) return;
 
-            // ✨ NUEVO: Capturamos el detalle_adicional para saber si es clase individual
+            // 🚩 FIX: el divisor usa el TOTAL de links de la cuenta (todos sus ciclos,
+            // sin importar el mes), así el monto del pago se reparte de forma consistente
+            // sin importar en qué mes lo estés consultando. La suma de este monto a través
+            // de TODOS los meses siempre da exactamente pago.monto_pagado, ni más ni menos.
+            const montoPorLink = Number(pago.monto_pagado) / todosLosLinks.length;
+
+            // De esos links, solo nos interesan (mostramos) los que caen en ESTE mes.
+            const linksDeEsteMes = todosLosLinks.filter(link => {
+                if (!link.fecha_inicio_ciclo) return false;
+                const f = new Date(link.fecha_inicio_ciclo);
+                return f >= fechaInicio && f <= fechaFin;
+            });
+            if (linksDeEsteMes.length === 0) return; // seguridad: si no hay link de este mes, no se cuenta
+
             const detalleAdicional = pago.cuentas_por_cobrar?.detalle_adicional || '';
             const esPlanIndividual = detalleAdicional.toLowerCase().includes('plan individual');
-
-            // ✨ NUEVO: Asignamos 0 FTE si es individual, caso contrario el 0.5 por defecto
             const fteAsignado = esPlanIndividual ? 0 : 0.5;
 
-            links.forEach(link => {
+            linksDeEsteMes.forEach(link => {
                 const insc = link.inscripciones;
                 const sede = insc?.horarios_clases?.canchas?.sedes?.nombre || 'GENERAL';
                 const nivel = insc?.horarios_clases?.niveles_entrenamiento?.nombre || 'GENERAL';
@@ -168,13 +188,12 @@ export const movimientosFinancierosService = {
 
                 reporte[sede].niveles[nivel].ingresos.push({
                     id: pago.id,
-                    concepto: `PAGO - ${nivel} | ${fteAsignado} FTE`, // Ahora usa el FTE dinámico
-                    monto: (pago.monto_pagado / links.length).toString(),
-                    fecha: pago.fecha_pago,
+                    concepto: `PAGO - ${nivel} | ${fteAsignado} FTE`,
+                    monto: montoPorLink.toString(), // 🚩 FIX: ya no se divide por links.length del mes
+                    fecha: link.fecha_inicio_ciclo, // mostramos la fecha real del ciclo, no la fecha de pago
                     alumno: pago.cuentas_por_cobrar?.alumnos?.usuarios
                         ? `${pago.cuentas_por_cobrar.alumnos.usuarios.nombres} ${pago.cuentas_por_cobrar.alumnos.usuarios.apellidos}`
                         : 'N/A',
-                    // ✨ NUEVO: Flags que viajarán en el JSON para que el frontend los lea
                     es_plan_individual: esPlanIndividual,
                     detalle_adicional: detalleAdicional
                 });
@@ -182,6 +201,7 @@ export const movimientosFinancierosService = {
         });
 
         // 3. Consulta de MOVIMIENTOS FINANCIEROS (Ingresos/Egresos Manuales)
+        // Sin cambios: usan fecha_movimiento, no dependen de ciclos.
         const movimientos = await prisma.movimientos_financieros.findMany({
             where: {
                 fecha_movimiento: { gte: fechaInicio, lte: fechaFin }
@@ -217,7 +237,7 @@ export const movimientosFinancierosService = {
         return reporte;
     },
 
-    // Eliminar un movimiento (Opcional, a veces en finanzas es mejor "anular" que borrar)
+    // Eliminar un movimiento
     eliminar: async (id) => {
         try {
             return await prisma.movimientos_financieros.delete({
@@ -229,23 +249,58 @@ export const movimientosFinancierosService = {
         }
     },
 
-    // Obtener balance de caja (Total Ingresos - Total Egresos)
+  
     obtenerBalance: async () => {
-        const ingresos = await prisma.movimientos_financieros.aggregate({
+        // =========================================================
+        // 1. INGRESOS AUTOMÁTICOS (pagos de alumnos)
+        // 🚩 FIX: antes esta función NO incluía los pagos de alumnos,
+        // solo los movimientos manuales. Ahora sí se suman, y la regla
+        // de validez es la misma que usa el resumen mensual: el pago
+        // debe tener al menos un ciclo real en inscripciones_deudas_link
+        // (fuente de verdad de "esto sí corresponde a una clase real").
+        // Como este balance es un TOTAL (sin rango de fechas), no filtramos
+        // por fecha_inicio_ciclo — solo exigimos que el link exista.
+        // =========================================================
+        const pagosAprobados = await prisma.pagos.findMany({
+            where: {
+                estado_validacion: 'APROBADO',
+                cuentas_por_cobrar: {
+                    inscripciones_deudas_link: { some: {} } // 👈 debe tener al menos un ciclo asociado
+                }
+            },
+            select: { monto_pagado: true }
+        });
+
+        const totalIngresosAutomaticos = pagosAprobados.reduce(
+            (acc, p) => acc + Number(p.monto_pagado || 0),
+            0
+        );
+
+        // =========================================================
+        // 2. INGRESOS Y EGRESOS MANUALES (movimientos_financieros)
+        // Sin cambios: se quedan tal cual estaban, usando fecha_movimiento
+        // (si registras algo en agosto, se queda en agosto, no se mueve).
+        // =========================================================
+        const ingresosManualesAgg = await prisma.movimientos_financieros.aggregate({
             _sum: { monto: true },
             where: { tipo_movimiento: 'INGRESO' }
         });
 
-        const egresos = await prisma.movimientos_financieros.aggregate({
+        const egresosAgg = await prisma.movimientos_financieros.aggregate({
             _sum: { monto: true },
             where: { tipo_movimiento: 'EGRESO' }
         });
 
-        const totalIngresos = ingresos._sum.monto || 0;
-        const totalEgresos = egresos._sum.monto || 0;
+        const totalIngresosManuales = Number(ingresosManualesAgg._sum.monto || 0);
+        const totalEgresos = Number(egresosAgg._sum.monto || 0);
+        const totalIngresos = totalIngresosAutomaticos + totalIngresosManuales;
 
         return {
             ingresos: totalIngresos,
+            // 🚩 NUEVO: desglose para que el frontend (o tú mismo debuggeando)
+            // pueda ver de dónde viene cada sol, sin tener que adivinar.
+            ingresosAutomaticos: totalIngresosAutomaticos,
+            ingresosManuales: totalIngresosManuales,
             egresos: totalEgresos,
             balance: totalIngresos - totalEgresos
         };

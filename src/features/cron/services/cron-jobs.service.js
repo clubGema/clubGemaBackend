@@ -54,6 +54,36 @@ export const iniciarCronJobs = () => {
     { timezone: 'America/Lima' }
   );
 
+  // ------------------------------------------------------------------
+// TAREA 3: EL COBRADOR DE RENOVACIONES FANTASMA (Cada hora, o diario)
+// Objetivo: Revertir renovaciones PENDIENTES cuyo plazo de pago (48h) ya venció.
+// ------------------------------------------------------------------
+cron.schedule(
+  '0 3 * * *', // Diario a las 3 AM, después del Verdugo (que corre a la 1 AM)
+  async () => {
+    logger.info(`[CRON] Iniciando limpieza de renovaciones abandonadas: ${new Date().toISOString()}`);
+    try {
+      await inscripcionCronService.limpiarRenovacionesAbandonadas();
+    } catch (error) {
+      logger.error('[CRON ERROR] Falló el Cobrador de Renovaciones Fantasma:', error);
+    }
+  },
+  { timezone: 'America/Lima' }
+);
+
+cron.schedule(
+    '5 1 * * *',
+    async () => {
+      logger.info(`[CRON] Iniciando revisión nocturna de clases únicas: ${new Date().toISOString()}`);
+      try {
+        await inscripcionCronService.gestionarVencimientosIndividual();
+      } catch (error) {
+        logger.error('[CRON ERROR] Falló el Verdugo de Vencimientos Individuales:', error);
+      }
+    },
+    { timezone: 'America/Lima' }
+  );
+
   cron.schedule(
     '15 1 * * *',
     async () => {

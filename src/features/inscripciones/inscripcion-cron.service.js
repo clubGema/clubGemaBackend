@@ -3,6 +3,7 @@ import { logger } from '../../shared/utils/logger.util.js';
 import { notificacionesService } from '../notificaciones/notificaciones.service.js';
 import { twilioProvider } from '../../shared/services/twilio.whatsapp.service.js';
 import { emailService } from '../../shared/services/brevo.email.service.js';
+import { inscripcionService } from './inscripcion.service.js';
 
 // 🔥 IMPORTAMOS EL SID DE LA PLANTILLA DESDE TUS SECRETOS 🔥
 import { TWILIO_TEMPLATE_PAGO_PARCIAL_SID, TWILIO_TEMPLATE_VENCIMIENTO_SID } from '../../config/secret.config.js';
@@ -28,122 +29,145 @@ const chunkArray = (array, size) => {
 };
 class InscripcionCronService {
   async limpiarReservasZombies() {
-    const param = await prisma.parametros_sistema.findUnique({
-      where: { clave: 'TIEMPO_LIMITE_RESERVA_MIN' },
-    });
-    const minutosLimite = param ? Number.parseInt(param.valor) : 20;
-    const horaCorte = new Date(Date.now() - minutosLimite * 60 * 1000);
+  const param = await prisma.parametros_sistema.findUnique({
+    where: { clave: 'TIEMPO_LIMITE_RESERVA_MIN' },
+  });
+  const minutosLimite = param ? Number.parseInt(param.valor) : 20;
+  const horaCorte = new Date(Date.now() - minutosLimite * 60 * 1000);
 
-    // 1. Buscamos las inscripciones zombies
-    const zombies = await prisma.inscripciones.findMany({
-      where: {
-        estado: 'PENDIENTE_PAGO',
-        creado_en: { lt: horaCorte },
+  // 1. Buscamos las inscripciones zombies
+  const zombies = await prisma.inscripciones.findMany({
+    where: {
+      estado: 'PENDIENTE_PAGO',
+      creado_en: { lt: horaCorte },
+    },
+    include: {
+      inscripciones_deudas_link: {
+        orderBy: {
+          id: "desc",
+        }
       },
-      include: {
-        inscripciones_deudas_link: {
-          orderBy: {
-            id: "desc",
-          }
-        },
-        _count: {
-          select: {
-            registros_asistencia: true,
-            congelamientos: true,
-          }
+      _count: {
+        select: {
+          registros_asistencia: true,
+          congelamientos: true,
         }
       }
-    });
+    }
+  });
 
-    if (zombies.length === 0) return;
+  if (zombies.length === 0) return;
 
-    for (const zombie of zombies) {
-      try {
-        await prisma.$transaction(async (tx) => {
+  for (const zombie of zombies) {
+    try {
+      await prisma.$transaction(async (tx) => {
 
-          // 2. Si tiene un link al puente, hay que limpiar las dependencias de la cuenta
-          if (zombie.inscripciones_deudas_link.length > 0) {
-            const cuentaId = zombie.inscripciones_deudas_link[0].cuenta_id;
-            const cuenta = await tx.cuentas_por_cobrar.findUnique({
+        // 🚩 REORDENADO: primero decidimos el destino de la inscripción (¿tiene historial real?)
+        // Esto evita borrar el link de deuda de una inscripción que va a sobrevivir como ACTIVO.
+        const tieneHistorial = zombie._count.registros_asistencia > 0 || zombie._count.congelamientos > 0;
+
+        // 2. Si tiene un link al puente, hay que limpiar las dependencias de la cuenta
+        if (zombie.inscripciones_deudas_link.length > 0) {
+          const cuentaId = zombie.inscripciones_deudas_link[0].cuenta_id;
+          const cuenta = await tx.cuentas_por_cobrar.findUnique({
+            where: { id: cuentaId }
+          })
+
+          // 🚩 FIX: solo borramos el link/cuenta si la inscripción NO va a quedar ACTIVA.
+          // Si tiene historial, el link representa su ciclo vigente real y debe conservarse
+          // para que el dashboard siga contándolo correctamente como activo.
+          if (cuenta?.estado === 'PENDIENTE' && !tieneHistorial) {
+            // PASO A: Borrar los links en el PUENTE (Esto evita el error que tuviste)
+            await tx.inscripciones_deudas_link.deleteMany({
+              where: { cuenta_id: cuentaId }
+            });
+
+            // PASO B: Borrar descuentos si existen
+            await tx.descuentos_aplicados.deleteMany({
+              where: { cuenta_id: cuentaId }
+            });
+
+            // PASO C: Borrar la CUENTA
+            await tx.cuentas_por_cobrar.delete({
               where: { id: cuentaId }
-            })
-
-            if (cuenta?.estado === 'PENDIENTE') {
-              // PASO A: Borrar los links en el PUENTE (Esto evita el error que tuviste)
-              await tx.inscripciones_deudas_link.deleteMany({
-                where: { cuenta_id: cuentaId }
-              });
-
-              // PASO B: Borrar descuentos si existen
-              await tx.descuentos_aplicados.deleteMany({
-                where: { cuenta_id: cuentaId }
-              });
-
-              // PASO C: Borrar la CUENTA
-              await tx.cuentas_por_cobrar.delete({
-                where: { id: cuentaId }
-              });
-            }
-          }
-          if (zombie._count.registros_asistencia > 0 || zombie._count.congelamientos > 0) {
-            await tx.inscripciones.update({
-              where: { id: zombie.id },
-              data: { estado: 'ACTIVO' }
-            })
-          } else {
-            // 3. PASO FINAL: Borrar la INSCRIPCIÓN (El zombie)
-            await tx.inscripciones.delete({
-              where: { id: zombie.id }
             });
           }
-        });
-        logger.info(`[FRANCOTIRADOR] Zombie ${zombie.id} liquidado con éxito.`);
-      } catch (error) {
-        logger.error(`[ERROR FRANCOTIRADOR] ID ${zombie.id}: ${error.message}`);
-      }
+        }
+
+        if (tieneHistorial) {
+          await tx.inscripciones.update({
+            where: { id: zombie.id },
+            data: { estado: 'ACTIVO' }
+          })
+        } else {
+          // 3. PASO FINAL: Borrar la INSCRIPCIÓN (El zombie)
+          await tx.inscripciones.delete({
+            where: { id: zombie.id }
+          });
+        }
+      });
+      logger.info(`[FRANCOTIRADOR] Zombie ${zombie.id} liquidado con éxito.`);
+    } catch (error) {
+      logger.error(`[ERROR FRANCOTIRADOR] ID ${zombie.id}: ${error.message}`);
     }
   }
+}
 
   async gestionarVencimientos() {
-    const hoyLima = dayjs().tz('America/Lima').startOf('day');
-    logger.info(`[VERDUGO] Iniciando revisión de ciclos. Hoy: ${hoyLima.format('YYYY-MM-DD')}`);
+  const hoyLima = dayjs().tz('America/Lima').startOf('day');
+  logger.info(`[VERDUGO] Iniciando revisión de ciclos. Hoy: ${hoyLima.format('YYYY-MM-DD')}`);
 
-    try {
-      const inscripcionesActivas = await prisma.inscripciones.findMany({
-        where: { estado: 'ACTIVO' }
-      });
+  try {
+    const inscripcionesActivas = await prisma.inscripciones.findMany({
+      where: { estado: 'ACTIVO' }
+    });
 
-      let totalFinalizados = 0;
+    let totalFinalizados = 0;
 
-      for (const insc of inscripcionesActivas) {
-        try {
-          const fechaInicio = dayjs(insc.fecha_inscripcion).tz('America/Lima').startOf('day');
+    for (const insc of inscripcionesActivas) {
+      try {
+        const fechaInicio = dayjs(insc.fecha_inscripcion).tz('America/Lima').startOf('day');
+        const diasTranscurridos = hoyLima.diff(fechaInicio, 'day');
 
-          const diasTranscurridos = hoyLima.diff(fechaInicio, 'day');
+        if (diasTranscurridos >= 30) {
+          // 🚩 Cierre real del ciclo: día 30 exacto, no "hoy" (que puede traer tolerancia)
+          const fechaFinCicloReal = fechaInicio.add(30, 'day').toDate();
 
-          if (diasTranscurridos >= 30) {
-            await prisma.inscripciones.update({
+          await prisma.$transaction(async (tx) => {
+            await tx.inscripciones.update({
               where: { id: insc.id },
               data: {
                 estado: 'FINALIZADO',
-                id_grupo_transaccion: null, // Limpiamos el ID de grupo
+                id_grupo_transaccion: null,
                 actualizado_en: new Date(),
               }
             });
 
-            totalFinalizados++;
-            logger.info(`[VERDUGO] ✅ Slot ${insc.id} liquidado (Días transcurridos: ${diasTranscurridos}) y desvinculado de grupo.`);
-          }
-        } catch (innerError) {
-          logger.error(`[VERDUGO ERROR] ID ${insc.id}: ${innerError.message}`);
-        }
-      }
+            // 🚩 NUEVO: cerramos el link de deuda que sigue abierto para esta inscripción
+            await tx.inscripciones_deudas_link.updateMany({
+              where: {
+                inscripcion_id: insc.id,
+                fecha_fin_ciclo: null
+              },
+              data: {
+                fecha_fin_ciclo: fechaFinCicloReal
+              }
+            });
+          });
 
-      logger.info(`[VERDUGO] Proceso terminado. Total cerrados: ${totalFinalizados}`);
-    } catch (error) {
-      logger.error(`[VERDUGO CRÍTICO]: ${error.message}`);
+          totalFinalizados++;
+          logger.info(`[VERDUGO] ✅ Slot ${insc.id} liquidado (Días: ${diasTranscurridos}) y ciclo de deuda cerrado en ${fechaFinCicloReal.toISOString()}.`);
+        }
+      } catch (innerError) {
+        logger.error(`[VERDUGO ERROR] ID ${insc.id}: ${innerError.message}`);
+      }
     }
+
+    logger.info(`[VERDUGO] Proceso terminado. Total cerrados: ${totalFinalizados}`);
+  } catch (error) {
+    logger.error(`[VERDUGO CRÍTICO]: ${error.message}`);
   }
+}
 
   async gestionarVencimientosIndividual() {
     const hoyLima = dayjs().tz('America/Lima').startOf('day');
@@ -530,6 +554,38 @@ class InscripcionCronService {
 
     logger.info(`[ALERTA RENOVACIÓN] Enviados ${totalEnviados} WhatsApps exitosamente.`);
   }
+
+  async limpiarRenovacionesAbandonadas() {
+  const ahora = new Date();
+  logger.info(`[COBRADOR] Iniciando revisión de renovaciones vencidas sin pagar. Hoy: ${ahora.toISOString()}`);
+
+  try {
+    const cuentasAbandonadas = await prisma.cuentas_por_cobrar.findMany({
+      where: {
+        estado: 'PENDIENTE',
+        detalle_adicional: { contains: 'RENOVACION' },
+        fecha_vencimiento: { lt: ahora }
+      }
+    });
+
+    let totalRevertidas = 0;
+
+    for (const cuenta of cuentasAbandonadas) {
+      try {
+        await inscripcionService.eliminarPaqueteCompleto(cuenta.id);
+        totalRevertidas++;
+        logger.info(`[COBRADOR] ✅ Renovación abandonada revertida. Cuenta ${cuenta.id}, alumno ${cuenta.alumno_id}.`);
+      } catch (innerError) {
+        logger.error(`[COBRADOR ERROR] Cuenta ${cuenta.id}: ${innerError.message}`);
+      }
+    }
+
+    logger.info(`[COBRADOR] Proceso terminado. Total revertidas: ${totalRevertidas}`);
+  } catch (error) {
+    logger.error(`[COBRADOR CRÍTICO]: ${error.message}`);
+  }
+}
+
 }
 
 export const inscripcionCronService = new InscripcionCronService();

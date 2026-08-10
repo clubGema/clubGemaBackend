@@ -5,6 +5,7 @@ import * as Validators from './validators/pagos.validator.js';
 import * as Logic from './logic/pagos.logic.js';
 import * as Utils from './utils/pagos.util.js';
 import { notificacionesService } from '../notificaciones/notificaciones.service.js';
+import { inscripcionService } from '../inscripciones/inscripcion.service.js';
 
 export const pagosService = {
   // 1. REGISTRAR EL PAGO (Integrado con Cloudinary 🚀)
@@ -77,122 +78,136 @@ export const pagosService = {
 
   // 2. VALIDAR EL PAGO (Tu lógica + Corrección de Monto + Sincronización de Fechas 🛡️)
   validarPago: async (data, tx = null) => {
-    const { pago_id, accion, usuario_admin_id, notas, monto_real_confirmado } = data;
-    const esAprobado = accion === 'APROBAR';
+  const { pago_id, accion, usuario_admin_id, notas, monto_real_confirmado } = data;
+  const esAprobado = accion === 'APROBAR';
 
-    if (!['APROBAR', 'RECHAZAR'].includes(accion)) {
-      throw new Error('La acción debe ser APROBAR o RECHAZAR.');
+  if (!['APROBAR', 'RECHAZAR'].includes(accion)) {
+    throw new Error('La acción debe ser APROBAR o RECHAZAR.');
+  }
+
+  const ejecutar = async (tx) => {
+    // 🛡️ PASO 1: Buscar y Validar el pago
+    let pago = await Validators.buscarYValidarPagoPendiente(tx, pago_id);
+
+    // 👮‍♂️ PASO 2: Corrección de Monto por el Admin
+    if (esAprobado && monto_real_confirmado) {
+      const montoAdmin = Number.parseFloat(monto_real_confirmado);
+      if (montoAdmin !== Number(pago.monto_pagado)) {
+        pago = await tx.pagos.update({
+          where: { id: pago.id },
+          data: {
+            monto_pagado: montoAdmin,
+            notas_validacion: `Monto corregido por Admin. (Reportado: ${pago.monto_pagado})`,
+            codigo_operacion: pago.codigo_operacion || 'Pagado | Sin código',
+          },
+          include: { cuentas_por_cobrar: true },
+        });
+      }
     }
 
-    const ejecutar = async (tx) => {
-      // 🛡️ PASO 1: Buscar y Validar el pago
-      let pago = await Validators.buscarYValidarPagoPendiente(tx, pago_id);
+    // 💰 PASO 3: Lógica de Alcancía
+    let saldoRestante = 0;
+    let esPagoCompleto = false;
+    if (esAprobado) {
+      const saldos = await Logic.calcularSaldosAlcancía(tx, pago);
+      saldoRestante = saldos.saldoRestante;
+      esPagoCompleto = saldos.esPagoCompleto;
+    }
 
-      // 👮‍♂️ PASO 2: Corrección de Monto por el Admin
-      if (esAprobado && monto_real_confirmado) {
-        const montoAdmin = Number.parseFloat(monto_real_confirmado);
-        if (montoAdmin !== Number(pago.monto_pagado)) {
-          pago = await tx.pagos.update({
-            where: { id: pago.id },
-            data: {
-              monto_pagado: montoAdmin,
-              notas_validacion: `Monto corregido por Admin. (Reportado: ${pago.monto_pagado})`,
-              codigo_operacion: pago.codigo_operacion || 'Pagado | Sin código',
-            },
-            include: { cuentas_por_cobrar: true },
-          });
-        }
-      }
+    // 🔄 PASO 4: Determinar Evolución de Estados
+    const { nuevoEstadoDeuda, activarAlumno } = await Logic.definirEvolucionDeEstados(
+      tx,
+      pago,
+      esAprobado,
+      esPagoCompleto
+    );
 
-      // 💰 PASO 3: Lógica de Alcancía
-      let saldoRestante = 0;
-      let esPagoCompleto = false;
-      if (esAprobado) {
-        const saldos = await Logic.calcularSaldosAlcancía(tx, pago);
-        saldoRestante = saldos.saldoRestante;
-        esPagoCompleto = saldos.esPagoCompleto;
-      }
+    // 📝 PASO 5: Actualizar el Pago y la Deuda
+    const notaFinalInformativa = esAprobado
+      ? esPagoCompleto ? 'PAGO TOTAL' : `ABONO PARCIAL. Resta: S/ ${saldoRestante.toFixed(2)}`
+      : 'Rechazado';
 
-      // 🔄 PASO 4: Determinar Evolución de Estados
-      const { nuevoEstadoDeuda, activarAlumno } = await Logic.definirEvolucionDeEstados(
-        tx,
-        pago,
-        esAprobado,
-        esPagoCompleto
-      );
+    const pagoActualizado = await tx.pagos.update({
+      where: { id: pago.id },
+      data: {
+        estado_validacion: esAprobado ? 'APROBADO' : 'RECHAZADO',
+        revisado_por: Number.parseInt(usuario_admin_id),
+        notas_validacion: `${notas || ''} | ${notaFinalInformativa}`,
+        fecha_pago: new Date(),
+        codigo_operacion: pago.codigo_operacion || 'Pagado | Sin código',
+      },
+    });
 
-      // 📝 PASO 5: Actualizar el Pago y la Deuda
-      const notaFinalInformativa = esAprobado
-        ? esPagoCompleto ? 'PAGO TOTAL' : `ABONO PARCIAL. Resta: S/ ${saldoRestante.toFixed(2)}`
-        : 'Rechazado';
+    await tx.cuentas_por_cobrar.update({
+      where: { id: pago.cuenta_id },
+      data: { estado: nuevoEstadoDeuda },
+    });
 
-      const pagoActualizado = await tx.pagos.update({
-        where: { id: pago.id },
-        data: {
-          estado_validacion: esAprobado ? 'APROBADO' : 'RECHAZADO',
-          revisado_por: Number.parseInt(usuario_admin_id),
-          notas_validacion: `${notas || ''} | ${notaFinalInformativa}`,
-          fecha_pago: new Date(),
-          codigo_operacion: pago.codigo_operacion || 'Pagado | Sin código',
-        },
-      });
+    // 🎓 PASO 6: GESTIÓN DE INSCRIPCIONES
+    // 🚩 CAMBIO CLAVE: Quitamos la condición "&& esPagoCompleto"
+    // Si 'activarAlumno' es true, significa que este pago (sea parcial o total) 
+    // habilita al alumno para tener clases.
+    if (activarAlumno) {
 
-      await tx.cuentas_por_cobrar.update({
-        where: { id: pago.cuenta_id },
-        data: { estado: nuevoEstadoDeuda },
-      });
-
-      // 🎓 PASO 6: GESTIÓN DE INSCRIPCIONES
-      // 🚩 CAMBIO CLAVE: Quitamos la condición "&& esPagoCompleto"
-      // Si 'activarAlumno' es true, significa que este pago (sea parcial o total) 
-      // habilita al alumno para tener clases.
-      if (activarAlumno) {
-
-        const links = await tx.inscripciones_deudas_link.findMany({
-          where: { cuenta_id: pago.cuenta_id },
-          include: {
-            inscripciones: {
-              include: { horarios_clases: true }
-            }
+      const links = await tx.inscripciones_deudas_link.findMany({
+        where: { cuenta_id: pago.cuenta_id },
+        include: {
+          inscripciones: {
+            include: { horarios_clases: true }
           }
-        });
+        }
+      });
 
-        for (const link of links) {
-          const insc = link.inscripciones;
+      for (const link of links) {
+        const insc = link.inscripciones;
 
-          // 🛡️ SEGURO: Solo activar y generar clases si la inscripción está 'POR_VALIDAR'
-          // Esto evita que si el alumno hace un SEGUNDO abono parcial, se le vuelvan a generar clases.
-          if (insc.estado === 'POR_VALIDAR') {
-            await tx.inscripciones.update({
-              where: { id: insc.id },
-              data: {
-                estado: 'ACTIVO',
-                actualizado_en: new Date()
-              },
-            });
+        // 🛡️ SEGURO: Solo activar y generar clases si la inscripción está 'POR_VALIDAR'
+        // Esto evita que si el alumno hace un SEGUNDO abono parcial, se le vuelvan a generar clases.
+        if (insc.estado === 'POR_VALIDAR') {
+          await tx.inscripciones.update({
+            where: { id: insc.id },
+            data: {
+              estado: 'ACTIVO',
+              actualizado_en: new Date()
+            },
+          });
 
-            if (insc.tipo_inscripcion === 'INDIVIDUAL') {
-              await asistenciaService.generarClaseUnica(tx, {
-                inscripcion_id: insc.id,
-                dia_semana: insc.horarios_clases.dia_semana,
-                coordinador_id: insc.horarios_clases.coordinador_id,
-                fecha_inicio: insc.fecha_inscripcion,
-              });
-              continue;
-            }
-
-            // GENERACIÓN DE ASISTENCIAS
-            await asistenciaService.generarClasesFuturas(tx, {
+          if (insc.tipo_inscripcion === 'INDIVIDUAL') {
+            await asistenciaService.generarClaseUnica(tx, {
               inscripcion_id: insc.id,
               dia_semana: insc.horarios_clases.dia_semana,
-              usuario_admin_id: Number.parseInt(usuario_admin_id),
               coordinador_id: insc.horarios_clases.coordinador_id,
               fecha_inicio: insc.fecha_inscripcion,
             });
+            continue;
           }
+
+          // GENERACIÓN DE ASISTENCIAS
+          await asistenciaService.generarClasesFuturas(tx, {
+            inscripcion_id: insc.id,
+            dia_semana: insc.horarios_clases.dia_semana,
+            usuario_admin_id: Number.parseInt(usuario_admin_id),
+            coordinador_id: insc.horarios_clases.coordinador_id,
+            fecha_inicio: insc.fecha_inscripcion,
+          });
         }
-      } else if (!esAprobado) {
-        // ❌ Lógica de rechazo
+      }
+    } else if (!esAprobado) {
+      // ❌ Lógica de rechazo
+      // 🚩 FIX: distinguimos si la cuenta rechazada es una RENOVACIÓN de un paquete
+      // existente (tiene historial: asistencias, congelamientos, etc.) o una
+      // inscripción NUEVA recién creada (segura de borrar).
+      // Antes esto siempre hacía deleteMany, lo cual para una renovación podía:
+      //   a) fallar por FK (registros_asistencia -> inscripciones es NoAction), o
+      //   b) si no había historial aún, borrar de verdad una inscripción con
+      //      meses de datos históricos del alumno.
+      const esRenovacion = pago.cuentas_por_cobrar.detalle_adicional?.includes('RENOVACION');
+
+      if (esRenovacion) {
+        // Revierte correctamente: restaura fecha original, reabre el link viejo,
+        // borra el link/cuenta de la renovación fallida. NO borra la inscripción.
+        await inscripcionService.eliminarPaqueteCompleto(pago.cuenta_id, tx);
+      } else {
         const links = await tx.inscripciones_deudas_link.findMany({
           where: { cuenta_id: pago.cuenta_id }
         });
@@ -201,29 +216,30 @@ export const pagosService = {
           where: { id: { in: idsInsc }, estado: 'POR_VALIDAR' }
         });
       }
-
-      // 🔔 PASO 7: NOTIFICACIÓN (Se mantiene igual)
-      await notificacionesService.crear({
-        alumnoId: pago.cuentas_por_cobrar.alumno_id,
-        titulo: esAprobado ? '✅ Pago Validado' : '❌ Pago Rechazado',
-        mensaje: esAprobado
-          ? `Tu pago de S/ ${pagoActualizado.monto_pagado} fue aprobado. ${!esPagoCompleto ? 'Recuerda que tienes un saldo pendiente.' : ''}`
-          : `Tu pago fue rechazado. Revisa tus observaciones.`,
-        tipo: esAprobado ? 'SUCCESS' : 'DANGER',
-        categoria: 'PAGOS',
-      });
-
-      return {
-        resultado: Utils.generarMensajeResultado(accion, esPagoCompleto, saldoRestante),
-        pago: pagoActualizado,
-        saldo_pendiente: saldoRestante,
-      };
     }
-    if (tx) {
-      return await ejecutar(tx);
-    }
-    return await prisma.$transaction(ejecutar);
-  },
+
+    // 🔔 PASO 7: NOTIFICACIÓN (Se mantiene igual)
+    await notificacionesService.crear({
+      alumnoId: pago.cuentas_por_cobrar.alumno_id,
+      titulo: esAprobado ? '✅ Pago Validado' : '❌ Pago Rechazado',
+      mensaje: esAprobado
+        ? `Tu pago de S/ ${pagoActualizado.monto_pagado} fue aprobado. ${!esPagoCompleto ? 'Recuerda que tienes un saldo pendiente.' : ''}`
+        : `Tu pago fue rechazado. Revisa tus observaciones.`,
+      tipo: esAprobado ? 'SUCCESS' : 'DANGER',
+      categoria: 'PAGOS',
+    });
+
+    return {
+      resultado: Utils.generarMensajeResultado(accion, esPagoCompleto, saldoRestante),
+      pago: pagoActualizado,
+      saldo_pendiente: saldoRestante,
+    };
+  }
+  if (tx) {
+    return await ejecutar(tx);
+  }
+  return await prisma.$transaction(ejecutar);
+},
   obtenerTodos: async () => {
     return await prisma.pagos.findMany({
       include: {

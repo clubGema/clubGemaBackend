@@ -107,14 +107,14 @@ export const usuarioController = {
   }),
 
   getGraficosAvanzados: catchAsync(async (req, res) => {
-    // Llamamos a tu nueva súper función del servicio
-    const dataGraficos = await usuarioService.getGraficosAvanzados();
+  const { year } = req.query; // 🚩 NUEVO: faltaba leer el query param
+  const dataGraficos = await usuarioService.getGraficosAvanzados(year); // 🚩 NUEVO: se lo pasamos
 
-    return apiResponse.success(res, {
-      message: 'Data para gráficos generada exitosamente',
-      data: dataGraficos
-    });
-  }),
+  return apiResponse.success(res, {
+    message: 'Data para gráficos generada exitosamente',
+    data: dataGraficos
+  });
+}),
   updatePagoInline: catchAsync(async (req, res) => {
     const { id } = req.params;
     const { campo, valor } = req.body;

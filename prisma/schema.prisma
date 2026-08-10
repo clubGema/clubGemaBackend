@@ -189,6 +189,11 @@ model inscripciones_deudas_link {
   cuenta_id          Int
   monto_asignado     Decimal            @db.Decimal(10, 2)
   creado_en          DateTime           @default(now()) @db.Timestamp(6)
+   // === CAMPOS NUEVOS ===
+  fecha_inicio_ciclo DateTime?          @db.Date   // arranca nullable, se llena en el backfill
+  fecha_fin_ciclo    DateTime?          @db.Date   // null = ciclo vigente (todavía activo)
+  es_estimado        Boolean            @default(false) // true = viene del backfill, no de captura en vivo
+  
   inscripciones      inscripciones      @relation(fields: [inscripcion_id], references: [id], onDelete: Cascade)
   cuentas_por_cobrar cuentas_por_cobrar @relation(fields: [cuenta_id], references: [id], onDelete: Cascade)
 
