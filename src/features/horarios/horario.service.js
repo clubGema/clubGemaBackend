@@ -375,6 +375,11 @@ export const horarioService = {
     const horarios = await prisma.horarios_clases.findMany({
       where: {
         nivel_id: insc.horarios_clases.nivel_id,
+        canchas: {
+          sedes: {
+            activo: true,
+          }
+        }
       },
       select: HORARIO_SELECT,
     });
