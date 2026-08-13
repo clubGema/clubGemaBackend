@@ -72,13 +72,13 @@ model catalogo_conceptos {
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model congelamientos {
   id                  Int                 @id @default(autoincrement())
-  inscripcion_id      Int
+  inscripcion_id      Int?
   solicitud_lesion_id Int?
   fecha_inicio        DateTime            @db.Date
   fecha_fin           DateTime?           @db.Date
   dias_reconocidos    Int?                @default(0)
   estado              String?             @default("ACTIVO") @db.VarChar(20)
-  inscripciones       inscripciones       @relation(fields: [inscripcion_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  inscripciones       inscripciones?       @relation(fields: [inscripcion_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   solicitudes_lesion  solicitudes_lesion? @relation(fields: [solicitud_lesion_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 }
 

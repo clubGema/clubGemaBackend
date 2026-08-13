@@ -113,50 +113,50 @@ const evaluarSolicitud = async ({
     }
 
     // 3. Lógica APROBADA
-    // Necesitamos las inscripciones activas del alumno para saber qué clases justificar
-    const inscripcionesActivas = await tx.inscripciones.findMany({
+    // Necesitamos las inscripciones del alumno para saber qué clases justificar
+    const haceSeisMeses = new Date();
+    haceSeisMeses.setMonth(haceSeisMeses.getMonth() - 6);
+    const inscripciones = await tx.inscripciones.findMany({
       where: {
         alumno_id: solicitud.alumno_id,
-        estado: { in: ['ACTIVO'] },
+        estado: { in: ['ACTIVO', 'FINALIZADO'] },
+        creado_en: {
+          gte: haceSeisMeses,
+        },
       },
     });
 
-    if (!inscripcionesActivas || inscripcionesActivas.length === 0) {
+    if (!inscripciones || inscripciones.length === 0) {
       throw new ApiError(
-        'El alumno no tiene ninguna inscripción activa para aplicar la justificación por lesión.',
+        'El alumno no tiene ninguna inscripción en los últimos 6 meses.',
         400
       );
     }
 
     // Definir el rango de fechas a afectar
-    const inicioRango = new Date(fechaInicio);
-    inicioRango.setHours(0, 0, 0, 0);
+    const inicioRango = new Date(fechaInicio + 'T00:00:00-05:00');
     let finRango
     if (tipo === 'RANGO') {
       if (!fechaFin) throw new ApiError('Fecha fin requerida para RANGO.', 400);
-      finRango = new Date(fechaFin);
-      finRango.setHours(0, 0, 0, 0);
+      finRango = new Date(fechaFin + 'T23:59:59-05:00');
 
       if (inicioRango > finRango) throw new ApiError('La fecha final debe ser mayor a la fecha inicial.', 400);
     }
 
-    // A. Crear registros en CONGELAMIENTOS (Uno por cada inscripción activa)
-    for (const inscripcion of inscripcionesActivas) {
+    // A. Crear registro en CONGELAMIENTOS
 
-      await tx.congelamientos.create({
-        data: {
-          inscripcion_id: inscripcion.id,
-          solicitud_lesion_id: solicitud.id,
-          fecha_inicio: inicioRango,
-          fecha_fin: tipo === 'RANGO' ? finRango : null, // Dejarlo en null si es INDEFINIDO, ya que no afecta la lógica de momento.
-          estado: 'ACTIVO',
-          //dias_reconocidos: 0, // Se puede manejar para ver cuantos dias se estan cubriendo con el congelamiento, pero tampoco es que afecte la lógica.
-        },
-      });
-    }
+    await tx.congelamientos.create({
+      data: {
+        solicitud_lesion_id: solicitud.id,
+        fecha_inicio: inicioRango,
+        fecha_fin: tipo === 'RANGO' ? finRango : null, // Dejarlo en null si es INDEFINIDO, ya que no afecta la lógica de momento.
+        estado: 'ACTIVO',
+        //dias_reconocidos: 0, // Se puede manejar para ver cuantos dias se estan cubriendo con el congelamiento, pero tampoco es que afecte la lógica.
+      },
+    });
 
     // B. Buscar asistencias en ese rango para TODAS las inscripciones
-    const idsInscripciones = inscripcionesActivas.map((i) => i.id);
+    const idsInscripciones = inscripciones.map((i) => i.id);
 
     const fechaFilter = tipo === 'RANGO'
       ? { gte: inicioRango, lte: finRango }
@@ -167,9 +167,11 @@ const evaluarSolicitud = async ({
         // Usamos 'in' para buscar en cualquiera de sus inscripciones
         inscripcion_id: { in: idsInscripciones },
         fecha: fechaFilter,
-        estado: { in: ['PROGRAMADA', 'FALTA'] },
+        estado: { in: ['PROGRAMADA', 'FALTA', 'PRESENTE', 'PENDIENTE', 'SIN_REGISTRO'] },
       },
     });
+
+    if (!clasesAfectadas || clasesAfectadas.length === 0) throw new ApiError('No se encontró ninguna clase afectada en el rango establecido', 400);
 
     // C. Procesar cada clase afectada
     const recuperacionesProcesadas = [];
