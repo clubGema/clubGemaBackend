@@ -10,12 +10,7 @@ import { formatFechaEs } from '../../shared/utils/date.util.js';
 // reprogramarMasivamente para permitir el flujo dinámico por cada alumno.
 
 export const claseService = {
-  /**
-   * Reprograma una clase completa para un grupo de alumnos.
-   * Modela una "Asistencia Anticipada" tal cual lo especificó la academia.
-   */
   reprogramarMasivamente: async ({ horario_origen_id, fecha_origen, motivo, usuario_admin_id }) => {
-    // 1. OBTENCIÓN DE DATOS INICIALES DEL HORARIO ORIGEN
     const horarioOrigen = await prisma.horarios_clases.findUnique({
       where: { id: horario_origen_id },
       select: {
@@ -24,7 +19,7 @@ export const claseService = {
         cancha_id: true,
         inscripciones: {
           where: { estado: 'ACTIVO' },
-          select: { id: true, alumno_id: true },
+          select: { id: true, alumno_id: true, id_grupo_transaccion: true, fecha_inscripcion: true },
         },
       },
     });
@@ -38,28 +33,21 @@ export const claseService = {
     fechaOrigenDate.setUTCHours(12, 0, 0, 0);
     const dateOrigenStr = formatFechaEs(fechaOrigenDate);
 
-    // 🔥 AQUI AGREGAMOS LA VALIDACIÓN AMIGABLE 🔥
-    // Verificamos si ya existe antes de que Prisma tire el error feo de Unique Constraint
     const reprogramacionPrevia = await prisma.reprogramaciones_clases.findFirst({
       where: {
         horario_id: horario_origen_id,
         fecha_origen: fechaOrigenDate,
-        estado: 'ACTIVO' 
+        estado: 'ACTIVO'
       }
     });
 
     if (reprogramacionPrevia) {
-      // Este ApiError llegará limpio a tu frontend y se mostrará en el Toast
       throw new ApiError(`El bloque del ${dateOrigenStr} ya fue reprogramado previamente.`, 400);
     }
-    // 🔥 FIN DE LA VALIDACIÓN 🔥
 
     const importUUID = await import('node:crypto');
     const grupo_uuid = importUUID.randomUUID();
 
-    // ======================================================================
-    // FUNCION AUXILIAR PARA CALCULAR EL SIGUIENTE DIA DE CLASE
-    // ======================================================================
     const calcularSiguienteDia = (desdeFecha, diasValidos) => {
       const next = new Date(desdeFecha);
       next.setUTCHours(12, 0, 0, 0);
@@ -73,14 +61,10 @@ export const claseService = {
       return next;
     };
 
-    // ======================================================================
-    // INICIO DE LA TRANSACCIÓN
-    // ======================================================================
     return await prisma.$transaction(
       async (tx) => {
         const inscripcionIds = inscripcionesGrupo.map((i) => i.id);
 
-        // 🛡️ PASO 1: VERIFICAR FERIADO
         const todosLosFeriados = await tx.feriados.findMany({ where: { activo: true } });
         const esFeriado = todosLosFeriados.some(
           (f) =>
@@ -103,12 +87,11 @@ export const claseService = {
           };
         }
 
-        // 🛡️ PASO 2: CREAR CABECERA DE REPROGRAMACION
         const reprogramacion = await tx.reprogramaciones_clases.create({
           data: {
             horario_id: horario_origen_id,
             fecha_origen: fechaOrigenDate,
-            fecha_destino: fechaOrigenDate, // Temporal, ya que ahora es individual
+            fecha_destino: fechaOrigenDate,
             hora_inicio_destino:
               horarioOrigen.hora_inicio.getUTCHours().toString().padStart(2, '0') +
               ':' +
@@ -125,7 +108,6 @@ export const claseService = {
           },
         });
 
-        // 🛡️ PASO 3: MARCAR REGISTROS ORIGINALES COMO REPROGRAMADOS
         await tx.registros_asistencia.updateMany({
           where: { inscripcion_id: { in: inscripcionIds }, fecha: fechaOrigenDate },
           data: {
@@ -135,9 +117,7 @@ export const claseService = {
           },
         });
 
-        // 🛡️ PASO 4: PROCESAR CADA ALUMNO INDIVIDUALMENTE
         for (const ins of inscripcionesGrupo) {
-          // A) Obtener todos los días de entrenamiento del alumno (todas sus inscripciones)
           const susInscripciones = await tx.inscripciones.findMany({
             where: { alumno_id: ins.alumno_id, estado: 'ACTIVO' },
             select: { horario_id: true, horarios_clases: { select: { dia_semana: true } }, registros_asistencia: true },
@@ -146,16 +126,13 @@ export const claseService = {
             ...new Set(susInscripciones.map((s) => s.horarios_clases.dia_semana)),
           ];
 
-          // B) Buscar su última clase programada actual
           const registrosAsist = susInscripciones.flatMap(i => i.registros_asistencia.map(r => r.fecha))
           const ultimaClase = new Date(Math.max(...registrosAsist));
 
-          // C) Calcular nueva fecha de reposición (Su próximo día regular DESPUÉS del fin de ciclo)
           const fechaFinOriginal = new Date(ultimaClase);
           const fechaReposicion = calcularSiguienteDia(fechaFinOriginal, diasDelAlumno);
           const dateReposicionStr = formatFechaEs(fechaReposicion);
 
-          // D) Crear el registro de reposición
           await tx.registros_asistencia.create({
             data: {
               inscripcion_id: ins.id,
@@ -167,11 +144,29 @@ export const claseService = {
             },
           });
 
-          // E) Calcular el desfase en días y extender facturación
-          const diffMs = fechaReposicion.getTime() - fechaFinOriginal.getTime();
-          const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
+          if (!ins.id_grupo_transaccion) {
+            await tx.notificaciones.create({
+              data: {
+                alumno_id: ins.alumno_id,
+                titulo: '🚨 Clase Reprogramada',
+                mensaje: `Tu sesión del ${dateOrigenStr} se movió al ${dateReposicionStr}.`,
+                tipo: 'ALERTA',
+                categoria: 'CLASES',
+              },
+            });
+            continue;
+          }
 
-          // E) Extender facturación usando lógica nativa de Prisma
+          const fechaCorte = new Date(ins.fecha_inscripcion);
+          fechaCorte.setUTCDate(fechaCorte.getUTCDate() + 29);
+
+          const inicioStr = fechaCorte.toISOString().split('T')[0];
+          const finStr = fechaReposicion.toISOString().split('T')[0];
+
+          const inicio = new Date(inicioStr);
+          const fin = new Date(finStr);
+          const diffDays = Math.round((fin - inicio) / (1000 * 60 * 60 * 24));
+
           const inscripcionActual = await tx.inscripciones.findUnique({
             where: { id: ins.id },
             select: { fecha_inscripcion: true },
@@ -180,17 +175,16 @@ export const claseService = {
           const nuevaFechaInscripcion = new Date(inscripcionActual.fecha_inscripcion);
           nuevaFechaInscripcion.setDate(nuevaFechaInscripcion.getDate() + diffDays);
 
-          await tx.inscripciones.update({
-            where: { id: ins.id },
+          await tx.inscripciones.updateMany({
+            where: { id_grupo_transaccion: ins.id_grupo_transaccion },
             data: { fecha_inscripcion: nuevaFechaInscripcion },
           });
 
-          // F) Notificar al alumno
           await tx.notificaciones.create({
             data: {
               alumno_id: ins.alumno_id,
               titulo: '🚨 Clase Reprogramada',
-              mensaje: `Tu sesión del ${dateOrigenStr} se movió al ${dateReposicionStr}. Tu fecha de pago se extendió ${diffDays} días.`,
+              mensaje: `Tu sesión del ${dateOrigenStr} se movió al ${dateReposicionStr}, al igual que tu fecha de corte.`,
               tipo: 'ALERTA',
               categoria: 'CLASES',
             },
@@ -440,47 +434,47 @@ export const claseService = {
     return fechasDisponibles;
   },
   obtenerFechasPasadas: async (horario_id) => {
-  const horario = await prisma.horarios_clases.findUnique({
-    where: { id: Number(horario_id) },
-  });
+    const horario = await prisma.horarios_clases.findUnique({
+      where: { id: Number(horario_id) },
+    });
 
-  if (!horario) return [];
+    if (!horario) return [];
 
-  const diasPermitidos = [horario.dia_semana];
-  const fechasDisponibles = [];
+    const diasPermitidos = [horario.dia_semana];
+    const fechasDisponibles = [];
 
-  // 1. El límite es el final del día de HOY
-  const fechaLimite = new Date();
-  fechaLimite.setHours(23, 59, 59, 999);
+    // 1. El límite es el final del día de HOY
+    const fechaLimite = new Date();
+    fechaLimite.setHours(23, 59, 59, 999);
 
-  // 2. El punto de inicio es hace EXACTAMENTE 2 MESES atrás
-  let fechaActual = new Date();
-  fechaActual.setMonth(fechaActual.getMonth() - 2);
-  fechaActual.setHours(0, 0, 0, 0);
+    // 2. El punto de inicio es hace EXACTAMENTE 2 MESES atrás
+    let fechaActual = new Date();
+    fechaActual.setMonth(fechaActual.getMonth() - 2);
+    fechaActual.setHours(0, 0, 0, 0);
 
-  // 3. El bucle que recorre día por día desde hace 2 meses hasta hoy
-  while (fechaActual <= fechaLimite) {
-    let diaSemanaJS = fechaActual.getDay();
-    if (diaSemanaJS === 0) diaSemanaJS = 7; // Convertir domingo a 7
+    // 3. El bucle que recorre día por día desde hace 2 meses hasta hoy
+    while (fechaActual <= fechaLimite) {
+      let diaSemanaJS = fechaActual.getDay();
+      if (diaSemanaJS === 0) diaSemanaJS = 7; // Convertir domingo a 7
 
-    if (diasPermitidos.includes(diaSemanaJS)) {
-      const año = fechaActual.getFullYear();
-      const mes = String(fechaActual.getMonth() + 1).padStart(2, '0');
-      const dia = String(fechaActual.getDate()).padStart(2, '0');
+      if (diasPermitidos.includes(diaSemanaJS)) {
+        const año = fechaActual.getFullYear();
+        const mes = String(fechaActual.getMonth() + 1).padStart(2, '0');
+        const dia = String(fechaActual.getDate()).padStart(2, '0');
 
-      // 🔥 TRUCO: Usamos unshift() en lugar de push()
-      // Esto hace que las fechas se agreguen al inicio del arreglo.
-      // Así, el select en tu frontend mostrará el martes pasado arriba del todo, 
-      // y el martes de hace 2 meses hasta abajo.
-      fechasDisponibles.unshift(`${año}-${mes}-${dia}`);
+        // 🔥 TRUCO: Usamos unshift() en lugar de push()
+        // Esto hace que las fechas se agreguen al inicio del arreglo.
+        // Así, el select en tu frontend mostrará el martes pasado arriba del todo, 
+        // y el martes de hace 2 meses hasta abajo.
+        fechasDisponibles.unshift(`${año}-${mes}-${dia}`);
+      }
+
+      // Avanzar un día
+      fechaActual.setDate(fechaActual.getDate() + 1);
     }
 
-    // Avanzar un día
-    fechaActual.setDate(fechaActual.getDate() + 1);
-  }
-
-  return fechasDisponibles;
-},
+    return fechasDisponibles;
+  },
 
   /**
    * Obtiene la lista de horarios que tienen al menos un registro de asistencia generado,
