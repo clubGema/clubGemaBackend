@@ -72,5 +72,17 @@ export const movimientosFinancierosController = {
         } catch (error) {
             res.status(500).json({ success: false, message: error.message });
         }
-    }
+    },
+    obtenerResumenAnual: async (req, res) => {
+        try {
+            const { anio } = req.query;
+            if (!anio) {
+                return res.status(400).json({ success: false, message: "Parámetro 'anio' es obligatorio" });
+            }
+            const data = await movimientosFinancierosService.obtenerResumenAnual(anio);
+            res.json({ success: true, data });
+        } catch (error) {
+            res.status(500).json({ success: false, message: error.message });
+        }
+    },
 };

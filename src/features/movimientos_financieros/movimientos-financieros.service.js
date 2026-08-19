@@ -304,5 +304,75 @@ export const movimientosFinancierosService = {
             egresos: totalEgresos,
             balance: totalIngresos - totalEgresos
         };
-    }
+    },
+
+      obtenerResumenAnual: async (anio) => {
+        const anioInt = parseInt(anio);
+        const fechaInicio = new Date(anioInt, 0, 1);
+        const fechaFin = new Date(anioInt, 11, 31, 23, 59, 59);
+ 
+        // Ingresos automáticos (pagos), agrupados por mes del CICLO
+        // (fecha_inicio_ciclo), no por fecha de pago — misma regla que
+        // obtenerResumenMensual: el monto se reparte entre todos los
+        // ciclos de la cuenta, no solo los del mes.
+        const filasPagos = await prisma.$queryRaw`
+            WITH links_totales AS (
+                SELECT cuenta_id, COUNT(*)::int AS total_links
+                FROM inscripciones_deudas_link
+                GROUP BY cuenta_id
+            )
+            SELECT
+                EXTRACT(MONTH FROM idl.fecha_inicio_ciclo)::int AS mes,
+                SUM(p.monto_pagado / lt.total_links) AS total
+            FROM pagos p
+            JOIN cuentas_por_cobrar cpc        ON cpc.id = p.cuenta_id
+            JOIN links_totales lt              ON lt.cuenta_id = cpc.id
+            JOIN inscripciones_deudas_link idl ON idl.cuenta_id = cpc.id
+            WHERE p.estado_validacion = 'APROBADO'
+              AND idl.fecha_inicio_ciclo BETWEEN ${fechaInicio} AND ${fechaFin}
+            GROUP BY EXTRACT(MONTH FROM idl.fecha_inicio_ciclo)
+            ORDER BY mes;
+        `;
+ 
+        // Movimientos manuales (ingreso/egreso), agrupados por mes y tipo
+        const filasMovimientos = await prisma.$queryRaw`
+            SELECT
+                EXTRACT(MONTH FROM mf.fecha_movimiento)::int AS mes,
+                mf.tipo_movimiento AS tipo,
+                SUM(mf.monto) AS total
+            FROM movimientos_financieros mf
+            WHERE mf.fecha_movimiento BETWEEN ${fechaInicio} AND ${fechaFin}
+            GROUP BY EXTRACT(MONTH FROM mf.fecha_movimiento), mf.tipo_movimiento
+            ORDER BY mes;
+        `;
+ 
+        // Armamos los 12 meses siempre (aunque no haya datos), para que
+        // el frontend no tenga que rellenar huecos al graficar.
+        const meses = Array.from({ length: 12 }, (_, i) => ({
+            mes: i + 1,
+            anio: anioInt,
+            ingresosPagos: 0,      // ingresos automáticos (pagos de alumnos)
+            ingresosManuales: 0,   // movimientos manuales tipo INGRESO
+            egresos: 0,            // movimientos manuales tipo EGRESO
+            totalIngresos: 0,      // ingresosPagos + ingresosManuales
+            balance: 0             // totalIngresos - egresos
+        }));
+ 
+        filasPagos.forEach(fila => {
+            meses[Number(fila.mes) - 1].ingresosPagos = Number(fila.total);
+        });
+ 
+        filasMovimientos.forEach(fila => {
+            const idx = Number(fila.mes) - 1;
+            if (fila.tipo === 'INGRESO') meses[idx].ingresosManuales = Number(fila.total);
+            else if (fila.tipo === 'EGRESO') meses[idx].egresos = Number(fila.total);
+        });
+ 
+        meses.forEach(m => {
+            m.totalIngresos = m.ingresosPagos + m.ingresosManuales;
+            m.balance = m.totalIngresos - m.egresos;
+        });
+ 
+        return meses;
+    },
 };
