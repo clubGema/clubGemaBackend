@@ -55,3 +55,48 @@ export const actualizarPerfilSchema = z
     numero_documento: z.string().max(20, 'Máximo 20 caracteres').optional(),
   })
   .strict();
+
+// 🔥 NUEVO: contactos de emergencia del alumno (tabla alumnos_contactos)
+
+export const crearContactoSchema = z
+  .object({
+    nombre_completo: z
+      .string()
+      .min(3, 'El nombre completo debe tener al menos 3 caracteres')
+      .max(150, 'Máximo 150 caracteres'),
+
+    relacion: z
+      .string()
+      .min(2, 'Indica la relación (ej. Madre, Padre, Tutor)')
+      .max(50, 'Máximo 50 caracteres'),
+
+    telefono: z
+      .string()
+      .regex(/^\+?[0-9]{7,15}$/, 'Formato de teléfono inválido'),
+
+    es_principal: z.boolean().optional(),
+  })
+  .strict();
+
+export const actualizarContactoSchema = z
+  .object({
+    nombre_completo: z
+      .string()
+      .min(3, 'El nombre completo debe tener al menos 3 caracteres')
+      .max(150, 'Máximo 150 caracteres')
+      .optional(),
+
+    relacion: z
+      .string()
+      .min(2, 'Indica la relación (ej. Madre, Padre, Tutor)')
+      .max(50, 'Máximo 50 caracteres')
+      .optional(),
+
+    telefono: z
+      .string()
+      .regex(/^\+?[0-9]{7,15}$/, 'Formato de teléfono inválido')
+      .optional(),
+
+    es_principal: z.boolean().optional(),
+  })
+  .strict();

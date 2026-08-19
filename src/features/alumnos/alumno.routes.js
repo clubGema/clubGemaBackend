@@ -3,12 +3,34 @@ import { alumnoController } from './alumno.controller.js';
 import { authenticate } from '../../shared/middlewares/auth.middleware.js';
 import { authorize } from '../../shared/middlewares/authorize.middleware.js';
 import { validate } from '../../shared/middlewares/validate.middleware.js';
-import { actualizarPerfilSchema } from './alumno.schema.js';
+import {
+  actualizarPerfilSchema,
+  crearContactoSchema,
+  actualizarContactoSchema,
+} from './alumno.schema.js';
 
 const router = Router();
 
 router.use(authenticate);
 
+router.get('/mi-perfil/contactos', alumnoController.listarMisContactos);
+
+router.post(
+  '/mi-perfil/contactos',
+  validate(crearContactoSchema),
+  alumnoController.crearContacto
+);
+
+router.patch(
+  '/mi-perfil/contactos/:contactoId',
+  validate(actualizarContactoSchema),
+  alumnoController.actualizarContacto
+);
+
+router.delete(
+  '/mi-perfil/contactos/:contactoId',
+  alumnoController.eliminarContacto
+);
 
 router.get('/mi-perfil', alumnoController.obtenerMiPerfil);
 // PATCH /api/alumno/mi-perfil

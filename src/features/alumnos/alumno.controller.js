@@ -1,6 +1,7 @@
 import { alumnoService } from './alumno.service.js';
 import { apiResponse } from '../../shared/utils/response.util.js';
 import { catchAsync } from '../../shared/utils/catchAsync.util.js';
+import { ApiError } from '../../shared/utils/error.util.js';
 
 export const alumnoController = {
   actualizarMiPerfil: catchAsync(async (req, res) => {
@@ -26,16 +27,13 @@ export const alumnoController = {
     });
   }),
   listarAlumnosResumenPorCoordinador: catchAsync(async (req, res) => {
-    // Extraemos el ID y el Rol del token de sesión
     const { id: usuarioId, role } = req.user;
 
     let data;
 
     if (role === 'Administrador') {
-      // Si es Admin, llama al service global (sin filtro de ID)
       data = await alumnoService.listarAlumnosResumen();
     } else {
-      // Si es Coordinador, pasamos su ID para filtrar sus alumnos
       data = await alumnoService.listarAlumnosResumenPorCoordinador(usuarioId);
     }
 
@@ -48,5 +46,41 @@ export const alumnoController = {
     const { estado, alumnoId } = req.body;
     await alumnoService.cambiarHistorialAlumno(alumnoId, estado);
     return apiResponse.success(res, { message: `Historial deportivo cambiado a ${estado}` })
-  })
+  }),
+
+  // 🔥 Contactos de emergencia — usan alumnoService (todo mergeado en un solo archivo)
+  listarMisContactos: catchAsync(async (req, res) => {
+    const data = await alumnoService.listarMisContactos(req.user.id);
+    return apiResponse.success(res, {
+      message: 'Contactos de emergencia cargados',
+      data,
+    });
+  }),
+
+  crearContacto: catchAsync(async (req, res) => {
+    const data = await alumnoService.crearContacto(req.user.id, req.body);
+    return apiResponse.success(res, {
+      message: 'Contacto agregado correctamente',
+      data,
+    });
+  }),
+
+  actualizarContacto: catchAsync(async (req, res) => {
+    const contactoId = Number(req.params.contactoId);
+    if (Number.isNaN(contactoId)) throw new ApiError('ID de contacto inválido', 400);
+
+    const data = await alumnoService.actualizarContacto(req.user.id, contactoId, req.body);
+    return apiResponse.success(res, {
+      message: 'Contacto actualizado correctamente',
+      data,
+    });
+  }),
+
+  eliminarContacto: catchAsync(async (req, res) => {
+    const contactoId = Number(req.params.contactoId);
+    if (Number.isNaN(contactoId)) throw new ApiError('ID de contacto inválido', 400);
+
+    await alumnoService.eliminarContacto(req.user.id, contactoId);
+    return apiResponse.success(res, { message: 'Contacto eliminado correctamente' });
+  }),
 };

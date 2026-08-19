@@ -180,5 +180,89 @@ export const alumnoService = {
       }
       throw new ApiError(e instanceof Error ? e.message : 'Error Interno', 500)
     }
-  }
+  },
+   listarMisContactos: async (usuarioId) => {
+    return await prisma.alumnos_contactos.findMany({
+      where: { alumno_id: usuarioId },
+      orderBy: [{ es_principal: 'desc' }, { id: 'asc' }],
+    });
+  },
+
+  // ➕ Crea un contacto para el alumno de la sesión
+  crearContacto: async (usuarioId, datos) => {
+    return await prisma.$transaction(async (tx) => {
+      // Verificamos que el alumno exista (evita contactos huérfanos)
+      const alumno = await tx.alumnos.findUnique({
+        where: { usuario_id: usuarioId },
+        select: { usuario_id: true },
+      });
+      if (!alumno) throw new ApiError('Alumno no encontrado', 404);
+
+      // 🚨 REGLA: si este contacto viene marcado como principal,
+      // desmarcamos cualquier otro principal existente antes de crear
+      if (datos.es_principal) {
+        await tx.alumnos_contactos.updateMany({
+          where: { alumno_id: usuarioId, es_principal: true },
+          data: { es_principal: false },
+        });
+      }
+
+      return await tx.alumnos_contactos.create({
+        data: {
+          alumno_id: usuarioId,
+          nombre_completo: datos.nombre_completo,
+          relacion: datos.relacion,
+          telefono: datos.telefono,
+          es_principal: !!datos.es_principal,
+        },
+      });
+    });
+  },
+
+  // ✏️ Actualiza un contacto — SOLO si pertenece al alumno de la sesión
+  actualizarContacto: async (usuarioId, contactoId, datos) => {
+    return await prisma.$transaction(async (tx) => {
+      const contacto = await tx.alumnos_contactos.findUnique({
+        where: { id: contactoId },
+      });
+
+      if (!contacto) throw new ApiError('Contacto no encontrado', 404);
+      // 🔒 Blindaje de propiedad: este contacto tiene que ser del alumno logueado
+      if (contacto.alumno_id !== usuarioId) {
+        throw new ApiError('No tienes permiso sobre este contacto', 403);
+      }
+
+      if (datos.es_principal) {
+        await tx.alumnos_contactos.updateMany({
+          where: { alumno_id: usuarioId, es_principal: true, id: { not: contactoId } },
+          data: { es_principal: false },
+        });
+      }
+
+      return await tx.alumnos_contactos.update({
+        where: { id: contactoId },
+        data: {
+          nombre_completo: datos.nombre_completo,
+          relacion: datos.relacion,
+          telefono: datos.telefono,
+          es_principal: datos.es_principal,
+        },
+      });
+    });
+  },
+
+  // 🗑️ Elimina un contacto — SOLO si pertenece al alumno de la sesión
+  eliminarContacto: async (usuarioId, contactoId) => {
+    const contacto = await prisma.alumnos_contactos.findUnique({
+      where: { id: contactoId },
+    });
+
+    if (!contacto) throw new ApiError('Contacto no encontrado', 404);
+    if (contacto.alumno_id !== usuarioId) {
+      throw new ApiError('No tienes permiso sobre este contacto', 403);
+    }
+
+    await prisma.alumnos_contactos.delete({ where: { id: contactoId } });
+  },
+
 };
