@@ -9,6 +9,9 @@ router.get('/resumen-tabla', historialAcademicoController.getResumenTablaAlumnos
 // GET /api/historial-academico/resumen-individual?sede_id=...
 router.get('/resumen-individual', historialAcademicoController.getFlagsIndividualPorSede);
 
+// GET /api/historial-academico/alumno-detalle/:alumnoId
+router.get('/alumno-detalle/:alumnoId', historialAcademicoController.getDetalleAlumno);
+
 // GET /api/historial-academico/alumno/:alumnoId
 router.get('/alumno/:alumnoId', historialAcademicoController.getHistorialPorAlumno);
 

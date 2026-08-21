@@ -47,5 +47,20 @@ export const historialAcademicoController = {
       next(error);
     }
   },
+    // 🆕 Detalle completo para el Expediente de un alumno
+  getDetalleAlumno: async (req, res, next) => {
+    try {
+      const { alumnoId } = req.params;
+      const data = await historialAcademicoService.obtenerDetalleAlumno(alumnoId);
+
+      return res.status(200).json({
+        success: true,
+        data,
+        message: 'Detalle de alumno obtenido correctamente'
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
 
 };

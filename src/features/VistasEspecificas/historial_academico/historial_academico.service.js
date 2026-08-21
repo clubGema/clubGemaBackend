@@ -339,5 +339,102 @@ export const historialAcademicoService = {
       throw new ApiError('Error al obtener el resumen de planes individuales', 500);
     }
   },
+   obtenerDetalleAlumno: async (alumnoId) => {
+    const id = parseInt(alumnoId);
+    if (!id) throw new ApiError('ID de alumno inválido', 400);
+
+    try {
+      const user = await prisma.usuarios.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          nombres: true,
+          apellidos: true,
+          numero_documento: true,
+          telefono_personal: true,
+          email: true,
+          username: true,
+          fecha_nacimiento: true,
+          alumnos: {
+            select: {
+              condiciones_medicas: true,
+              seguro_medico: true,
+              grupo_sanguineo: true,
+              historial: true,
+              direcciones: {
+                select: {
+                  direccion_completa: true,
+                  distrito: true,
+                  referencia: true,
+                },
+              },
+              alumnos_contactos: {
+                select: {
+                  nombre_completo: true,
+                  telefono: true,
+                  relacion: true,
+                },
+                take: 1,
+              },
+              inscripciones: {
+                where: { estado: 'ACTIVO' },
+                select: {
+                  horarios_clases: {
+                    select: { canchas: { select: { sedes: { select: { nombre: true } } } } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      });
+
+      if (!user) throw new ApiError('Alumno no encontrado', 404);
+
+      const alumnoData = user.alumnos || {};
+      const contacto = alumnoData.alumnos_contactos?.[0] || {};
+      const dir = alumnoData.direcciones || {};
+      const sedes = [...new Set(
+        (alumnoData.inscripciones || [])
+          .map((i) => i.horarios_clases?.canchas?.sedes?.nombre)
+          .filter(Boolean)
+      )];
+
+      return {
+        id: user.id,
+        nombres: user.nombres,
+        apellidos: user.apellidos,
+        full_name: `${user.nombres} ${user.apellidos}`,
+        dni: user.numero_documento || '---',
+        telefono: user.telefono_personal || 'S/N',
+        email: user.email || 'S/D',
+        username: user.username || '',
+        cumpleanos: user.fecha_nacimiento
+          ? user.fecha_nacimiento.toISOString().slice(0, 10)
+          : null,
+        sedes,
+        direccion: {
+          completa: dir.direccion_completa || 'No registrada',
+          distrito: dir.distrito || 'S/D',
+          referencia: dir.referencia || '',
+        },
+        salud: {
+          condiciones: alumnoData.condiciones_medicas || 'Ninguna',
+          seguro: alumnoData.seguro_medico || 'S/N',
+          sangre: alumnoData.grupo_sanguineo || 'S/N',
+          historial: alumnoData.historial,
+        },
+        contactoEmergencia: {
+          nombre: contacto.nombre_completo || 'No registrado',
+          telefono: contacto.telefono || 'S/N',
+          relacion: contacto.relacion || 'No especificada',
+        },
+      };
+    } catch (error) {
+      if (error instanceof ApiError) throw error;
+      console.error(`❌ [ERROR DETALLE ALUMNO] ID: ${alumnoId} | ${error.message}`);
+      throw new ApiError('Error al obtener el detalle del alumno', 500);
+    }
+  },
 
 };
