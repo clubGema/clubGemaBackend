@@ -2,6 +2,7 @@ import { PrismaClient } from '@prisma/client';
 import dayjs from 'dayjs';
 import crypto from 'crypto';
 import { detectarRegimenAlumno } from '../inscripciones/logic/inscripcion.logic.js';
+import * as Validators from '../inscripciones/validators/inscripcion.validator.js';
 
 const prisma = new PrismaClient();
 
@@ -357,6 +358,87 @@ export const CuentasPorCobrarService = {
 
     return { success: true, cuenta_id: nuevaCuenta.id };
   });
-}
+},
+  // 3. MOTOR DE RENOVACIÓN CON VALIDACIÓN DE AFORO (para paquetes FINALIZADOS
+  // que llevan tiempo sin actividad — a diferencia de generarRenovacionPaquete,
+  // aquí SÍ verificamos cupo disponible antes de reactivar cada horario,
+  // porque el slot pudo llenarse mientras el paquete estaba inactivo).
+  async generarRenovacionPaqueteValidado(grupoUuid, fechaInicioNueva) {
+    return await prisma.$transaction(async (tx) => {
+      // Acepta ACTIVO y FINALIZADO — a diferencia del original que solo servía ACTIVO
+      const paqueteActual = await tx.inscripciones.findMany({
+        where: {
+          id_grupo_transaccion: grupoUuid,
+          estado: { in: ['ACTIVO', 'FINALIZADO'] }
+        }
+      });
+
+      if (paqueteActual.length === 0) throw new Error("No se encontraron horarios en este paquete.");
+
+      // 🛡️ VALIDACIÓN DE AFORO por cada horario antes de reactivar
+      const paramZ = await tx.parametros_sistema.findUnique({ where: { clave: 'TIEMPO_LIMITE_RESERVA_MIN' } });
+      const fechaLimiteZombie = new Date(Date.now() - (paramZ ? parseInt(paramZ.valor) : 20) * 60 * 1000);
+
+      for (const ins of paqueteActual) {
+        await Validators.validarAforoHorario(tx, ins.horario_id, fechaLimiteZombie);
+      }
+
+      const esLegacy = await detectarRegimenAlumno(tx, paqueteActual[0].alumno_id);
+      const conceptoPaquete = await tx.catalogo_conceptos.findFirst({
+        where: { cantidad_clases_semanal: paqueteActual.length, activo: true, es_vigente: !esLegacy }
+      });
+
+      if (!conceptoPaquete) throw new Error(`⛔ No existe un plan para ${paqueteActual.length} clases en el catálogo.`);
+
+      const montoTotal = Number(conceptoPaquete.precio_base);
+      const fechaOriginalParaRevertir = paqueteActual[0].fecha_inscripcion;
+
+      const nuevaCuenta = await tx.cuentas_por_cobrar.create({
+        data: {
+          alumno_id: paqueteActual[0].alumno_id,
+          concepto_id: conceptoPaquete.id,
+          monto_final: montoTotal,
+          detalle_adicional: `RENOVACION|FECHA_ANT:${dayjs(fechaOriginalParaRevertir).format('YYYY-MM-DD')}|Ciclo:${dayjs(fechaInicioNueva).format('MMMM')}`,
+          fecha_vencimiento: dayjs().add(2, 'day').toDate(),
+          estado: 'PENDIENTE'
+        }
+      });
+
+      const montoPorSlot = montoTotal / paqueteActual.length;
+
+      const fechaCierre = dayjs(fechaInicioNueva).subtract(1, 'day').toDate();
+      await tx.inscripciones_deudas_link.updateMany({
+        where: {
+          inscripcion_id: { in: paqueteActual.map(i => i.id) },
+          fecha_fin_ciclo: null
+        },
+        data: { fecha_fin_ciclo: fechaCierre }
+      });
+
+      for (const ins of paqueteActual) {
+        await tx.inscripciones.update({
+          where: { id: ins.id },
+          data: {
+            fecha_inscripcion: dayjs(fechaInicioNueva).toDate(),
+            fecha_inscripcion_original: dayjs(fechaInicioNueva).toDate(),
+            actualizado_en: new Date(),
+            estado: 'PENDIENTE_PAGO'
+          }
+        });
+
+        await tx.inscripciones_deudas_link.create({
+          data: {
+            inscripcion_id: ins.id,
+            cuenta_id: nuevaCuenta.id,
+            monto_asignado: montoPorSlot,
+            fecha_inicio_ciclo: dayjs(fechaInicioNueva).toDate(),
+            fecha_fin_ciclo: null
+          }
+        });
+      }
+
+      return { success: true, cuenta_id: nuevaCuenta.id };
+    });
+  }
 
 };

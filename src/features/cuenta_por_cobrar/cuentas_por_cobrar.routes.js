@@ -5,6 +5,8 @@ const router = Router();
 
 router.post('/', CuentasPorCobrarController.crear);
 router.get('/', CuentasPorCobrarController.listar);
+// 3. Renovación con validación de aforo (usado para reactivar paquetes FINALIZADOS)
+router.post('/generar-adelantado-validado/:grupoUuid', CuentasPorCobrarController.generarAdelantadoValidado);
 router.get('/:id', CuentasPorCobrarController.obtenerUno);
 router.put('/:id', CuentasPorCobrarController.actualizar);
 router.delete('/:id', CuentasPorCobrarController.eliminar);

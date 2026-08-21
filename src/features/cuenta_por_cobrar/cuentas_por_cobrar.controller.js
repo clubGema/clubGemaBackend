@@ -88,5 +88,16 @@ export const CuentasPorCobrarController = {
       res.status(400).json({ ok: false, error: error.message });
     }
   },
-  
+    async generarAdelantadoValidado(req, res) {
+    try {
+      const { grupoUuid } = req.params;
+      const { fecha_inicio } = req.body;
+
+      const resultado = await CuentasPorCobrarService.generarRenovacionPaqueteValidado(grupoUuid, fecha_inicio);
+
+      return res.status(201).json({ success: true, data: resultado });
+    } catch (error) {
+      return res.status(400).json({ success: false, message: error.message });
+    }
+  }
 };
