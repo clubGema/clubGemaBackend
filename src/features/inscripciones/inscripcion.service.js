@@ -425,155 +425,155 @@ export const inscripcionService = {
   // 👋 FINALIZACIÓN VOLUNTARIA (El usuario decide retirarse)
   // =================================================================
   finalizarInscripcionVoluntaria: async (id) => {
-  return await prisma.$transaction(async (tx) => {
-    // 1. Verificamos que la inscripción exista y sea del alumno
-    const inscripcion = await tx.inscripciones.findUnique({
-      where: { id: Number.parseInt(id) }
-    });
+    return await prisma.$transaction(async (tx) => {
+      // 1. Verificamos que la inscripción exista y sea del alumno
+      const inscripcion = await tx.inscripciones.findUnique({
+        where: { id: Number.parseInt(id) }
+      });
 
-    if (!inscripcion) {
-      throw new Error('La inscripción no existe.');
-    }
-
-    // 🛡️ REGLA DE NEGOCIO: Solo se puede finalizar lo que está ACTIVO
-    if (inscripcion.estado !== 'ACTIVO') {
-      throw new Error(`No se puede finalizar una inscripción con estado ${inscripcion.estado}.`);
-    }
-
-    const inscripcionActualizada = await tx.inscripciones.update({
-      where: { id: Number.parseInt(id) },
-      data: {
-        estado: 'FINALIZADO',
-        actualizado_en: new Date()
+      if (!inscripcion) {
+        throw new Error('La inscripción no existe.');
       }
-    });
 
-    // 🚩 NUEVO: cerramos el ciclo de deuda vigente (mismo criterio que el Verdugo).
-    // Sin esto, el link se queda con fecha_fin_ciclo: null para siempre y el
-    // alumno sigue contando como "activo" en dashboards/reportes que miren fechas.
-    await tx.inscripciones_deudas_link.updateMany({
-      where: {
-        inscripcion_id: Number.parseInt(id),
-        fecha_fin_ciclo: null
-      },
-      data: {
-        fecha_fin_ciclo: new Date()
+      // 🛡️ REGLA DE NEGOCIO: Solo se puede finalizar lo que está ACTIVO
+      if (inscripcion.estado !== 'ACTIVO') {
+        throw new Error(`No se puede finalizar una inscripción con estado ${inscripcion.estado}.`);
       }
-    });
 
-    console.log(`✅ [CANCELACIÓN] El alumno ${inscripcion.alumno_id} finalizó voluntariamente el horario ${inscripcion.horario_id}.`);
-
-    return {
-      success: true,
-      mensaje: 'Inscripción finalizada correctamente.',
-      nuevo_estado: 'FINALIZADO'
-    };
-  });
-},
-
- separarFinalizarVoluntaria: async (id) => {
-  return await prisma.$transaction(async (tx) => {
-    const inscripcionId = Number(id);
-
-    const inscripcion = await tx.inscripciones.findUnique({
-      where: { id: inscripcionId },
-      include: {
-        inscripciones_deudas_link: {
-          select: {
-            cuentas_por_cobrar: true
-          },
-          orderBy: {
-            creado_en: 'desc'
-          },
-          take: 1
+      const inscripcionActualizada = await tx.inscripciones.update({
+        where: { id: Number.parseInt(id) },
+        data: {
+          estado: 'FINALIZADO',
+          actualizado_en: new Date()
         }
-      }
-    });
+      });
 
-    if (!inscripcion) throw new Error('Inscripción no encontrada');
-
-    const actualizada = await tx.inscripciones.update({
-      where: { id: inscripcionId },
-      data: {
-        estado: 'FINALIZADO',
-        id_grupo_transaccion: null,
-        actualizado_en: new Date()
-      }
-    });
-
-    if (inscripcion.estado === 'POR_VALIDAR') {
-      const inscPaq = await tx.inscripciones.findMany({
-        where: { id_grupo_transaccion: inscripcion.id_grupo_transaccion }
-      })
-      const cuenta = inscripcion.inscripciones_deudas_link?.[0]?.cuentas_por_cobrar;
-      if (!cuenta) throw new Error('Cuenta no encontrada');
-
-      if (inscPaq.length > 0) {
-        const esLegacy = await Logic.detectarRegimenAlumno(tx, inscripcion.alumno_id)
-        const cpto = await tx.catalogo_conceptos.findFirst({
-          where: {
-            activo: true,
-            es_vigente: !esLegacy,
-            cantidad_clases_semanal: inscPaq.length,
-          }
-        })
-        if (!cpto) throw new Error('Concepto de pago no encontrado');
-
-        let montoIndividual = Number(cpto.precio_base);
-        if (cuenta.detalle_adicional.toLowerCase().includes('camiseta')) montoIndividual += 50;
-        const { monto_final } = await CuentasPorCobrarService.actualizar(tx, cuenta.id, {
-          alumno_id: cuenta.alumno_id,
-          concepto_id: cpto.id,
-          detalle_adicional: `${cuenta.detalle_adicional} | Plan Actualizado por Finalización Voluntaria: ${cpto.cantidad_clases_semanal} clase(s)`,
-          monto_final: montoIndividual,
-          fecha_vencimiento: cuenta.fecha_vencimiento,
-          estado: cuenta.estado,
-        })
-
-        await tx.inscripciones_deudas_link.deleteMany({
-          where: {
-            inscripcion_id: inscripcion.id,
-            cuenta_id: cuenta.id,
-          }
-        })
-
-        await tx.pagos.updateMany({
-          where: { cuenta_id: cuenta.id },
-          data: {
-            monto_pagado: monto_final,
-          }
-        })
-      } else {
-        await tx.inscripciones_deudas_link.deleteMany({
-          where: {
-            inscripcion_id: inscripcion.id,
-            cuenta_id: cuenta.id,
-          }
-        })
-        await CuentasPorCobrarService.eliminar(cuenta.id, true, tx);
-      }
-    } else {
-      // 🚩 NUEVO: si la inscripción estaba ACTIVA (no POR_VALIDAR), su link de deuda
-      // vigente no se toca en ninguna otra rama de esta función. Lo cerramos aquí
-      // con el mismo criterio del Verdugo, para que no quede "vigente" para siempre.
+      // 🚩 NUEVO: cerramos el ciclo de deuda vigente (mismo criterio que el Verdugo).
+      // Sin esto, el link se queda con fecha_fin_ciclo: null para siempre y el
+      // alumno sigue contando como "activo" en dashboards/reportes que miren fechas.
       await tx.inscripciones_deudas_link.updateMany({
         where: {
-          inscripcion_id: inscripcionId,
+          inscripcion_id: Number.parseInt(id),
           fecha_fin_ciclo: null
         },
         data: {
           fecha_fin_ciclo: new Date()
         }
       });
-    }
 
-    return {
-      success: true,
-      mensaje: 'Horario removido del paquete y finalizado correctamente.',
-      nuevoEstado: actualizada.estado
-    };
-  });
-},
+      console.log(`✅ [CANCELACIÓN] El alumno ${inscripcion.alumno_id} finalizó voluntariamente el horario ${inscripcion.horario_id}.`);
+
+      return {
+        success: true,
+        mensaje: 'Inscripción finalizada correctamente.',
+        nuevo_estado: 'FINALIZADO'
+      };
+    });
+  },
+
+  separarFinalizarVoluntaria: async (id) => {
+    return await prisma.$transaction(async (tx) => {
+      const inscripcionId = Number(id);
+
+      const inscripcion = await tx.inscripciones.findUnique({
+        where: { id: inscripcionId },
+        include: {
+          inscripciones_deudas_link: {
+            select: {
+              cuentas_por_cobrar: true
+            },
+            orderBy: {
+              creado_en: 'desc'
+            },
+            take: 1
+          }
+        }
+      });
+
+      if (!inscripcion) throw new Error('Inscripción no encontrada');
+
+      const actualizada = await tx.inscripciones.update({
+        where: { id: inscripcionId },
+        data: {
+          estado: 'FINALIZADO',
+          id_grupo_transaccion: null,
+          actualizado_en: new Date()
+        }
+      });
+
+      if (inscripcion.estado === 'POR_VALIDAR') {
+        const inscPaq = await tx.inscripciones.findMany({
+          where: { id_grupo_transaccion: inscripcion.id_grupo_transaccion }
+        })
+        const cuenta = inscripcion.inscripciones_deudas_link?.[0]?.cuentas_por_cobrar;
+        if (!cuenta) throw new Error('Cuenta no encontrada');
+
+        if (inscPaq.length > 0) {
+          const esLegacy = await Logic.detectarRegimenAlumno(tx, inscripcion.alumno_id)
+          const cpto = await tx.catalogo_conceptos.findFirst({
+            where: {
+              activo: true,
+              es_vigente: !esLegacy,
+              cantidad_clases_semanal: inscPaq.length,
+            }
+          })
+          if (!cpto) throw new Error('Concepto de pago no encontrado');
+
+          let montoIndividual = Number(cpto.precio_base);
+          if (cuenta.detalle_adicional.toLowerCase().includes('camiseta')) montoIndividual += 50;
+          const { monto_final } = await CuentasPorCobrarService.actualizar(tx, cuenta.id, {
+            alumno_id: cuenta.alumno_id,
+            concepto_id: cpto.id,
+            detalle_adicional: `${cuenta.detalle_adicional} | Plan Actualizado por Finalización Voluntaria: ${cpto.cantidad_clases_semanal} clase(s)`,
+            monto_final: montoIndividual,
+            fecha_vencimiento: cuenta.fecha_vencimiento,
+            estado: cuenta.estado,
+          })
+
+          await tx.inscripciones_deudas_link.deleteMany({
+            where: {
+              inscripcion_id: inscripcion.id,
+              cuenta_id: cuenta.id,
+            }
+          })
+
+          await tx.pagos.updateMany({
+            where: { cuenta_id: cuenta.id },
+            data: {
+              monto_pagado: monto_final,
+            }
+          })
+        } else {
+          await tx.inscripciones_deudas_link.deleteMany({
+            where: {
+              inscripcion_id: inscripcion.id,
+              cuenta_id: cuenta.id,
+            }
+          })
+          await CuentasPorCobrarService.eliminar(cuenta.id, true, tx);
+        }
+      } else {
+        // 🚩 NUEVO: si la inscripción estaba ACTIVA (no POR_VALIDAR), su link de deuda
+        // vigente no se toca en ninguna otra rama de esta función. Lo cerramos aquí
+        // con el mismo criterio del Verdugo, para que no quede "vigente" para siempre.
+        await tx.inscripciones_deudas_link.updateMany({
+          where: {
+            inscripcion_id: inscripcionId,
+            fecha_fin_ciclo: null
+          },
+          data: {
+            fecha_fin_ciclo: new Date()
+          }
+        });
+      }
+
+      return {
+        success: true,
+        mensaje: 'Horario removido del paquete y finalizado correctamente.',
+        nuevoEstado: actualizada.estado
+      };
+    });
+  },
   cancelarReservaPendiente: async (id) => {
     return await prisma.$transaction(async (tx) => {
       // 1. Identificar la inscripción "semilla"
@@ -642,84 +642,84 @@ export const inscripcionService = {
 
   // inscripcion.service.js
   eliminarPaqueteCompleto: async (cuentaId, txExterna = null) => {
-  const ejecutar = async (tx) => {
-    // 1. Buscamos la cuenta para leer el detalle ANTES de borrarla
-    const cuenta = await tx.cuentas_por_cobrar.findUnique({
-      where: { id: parseInt(cuentaId) }
-    });
+    const ejecutar = async (tx) => {
+      // 1. Buscamos la cuenta para leer el detalle ANTES de borrarla
+      const cuenta = await tx.cuentas_por_cobrar.findUnique({
+        where: { id: parseInt(cuentaId) }
+      });
 
-    const links = await tx.inscripciones_deudas_link.findMany({
-      where: { cuenta_id: parseInt(cuentaId) }
-    });
+      const links = await tx.inscripciones_deudas_link.findMany({
+        where: { cuenta_id: parseInt(cuentaId) }
+      });
 
-    const idsInscripciones = links.map(l => l.inscripcion_id);
+      const idsInscripciones = links.map(l => l.inscripcion_id);
 
-    // 2. 🔄 REVERSIÓN BASADA EN EL DETALLE DE LA CUENTA
-    if (cuenta?.detalle_adicional?.includes('FECHA_ANT:')) {
-      const parteFecha = cuenta.detalle_adicional.split('FECHA_ANT:')[1].split('|')[0];
+      // 2. 🔄 REVERSIÓN BASADA EN EL DETALLE DE LA CUENTA
+      if (cuenta?.detalle_adicional?.includes('FECHA_ANT:')) {
+        const parteFecha = cuenta.detalle_adicional.split('FECHA_ANT:')[1].split('|')[0];
 
-      for (const idIns of idsInscripciones) {
-        await tx.inscripciones.update({
-          where: { id: idIns },
-          data: {
-            fecha_inscripcion: new Date(parteFecha),
-            fecha_inscripcion_original: new Date(parteFecha),
-            actualizado_en: new Date()
-          }
-        });
-
-        const ultimoLinkCerrado = await tx.inscripciones_deudas_link.findFirst({
-          where: {
-            inscripcion_id: idIns,
-            fecha_fin_ciclo: { not: null }
-          },
-          orderBy: { fecha_fin_ciclo: 'desc' }
-        });
-
-        if (ultimoLinkCerrado) {
-          await tx.inscripciones_deudas_link.update({
-            where: { id: ultimoLinkCerrado.id },
-            data: { fecha_fin_ciclo: null }
+        for (const idIns of idsInscripciones) {
+          await tx.inscripciones.update({
+            where: { id: idIns },
+            data: {
+              fecha_inscripcion: new Date(parteFecha),
+              fecha_inscripcion_original: new Date(parteFecha),
+              actualizado_en: new Date()
+            }
           });
+
+          const ultimoLinkCerrado = await tx.inscripciones_deudas_link.findFirst({
+            where: {
+              inscripcion_id: idIns,
+              fecha_fin_ciclo: { not: null }
+            },
+            orderBy: { fecha_fin_ciclo: 'desc' }
+          });
+
+          if (ultimoLinkCerrado) {
+            await tx.inscripciones_deudas_link.update({
+              where: { id: ultimoLinkCerrado.id },
+              data: { fecha_fin_ciclo: null }
+            });
+          }
         }
       }
-    }
 
-    // 3. LIMPIEZA TOTAL
-    await tx.inscripciones_deudas_link.deleteMany({ where: { cuenta_id: parseInt(cuentaId) } });
-    await tx.descuentos_aplicados.deleteMany({ where: { cuenta_id: parseInt(cuentaId) } });
-    await tx.pagos.deleteMany({ where: { cuenta_id: parseInt(cuentaId) } });
-    await tx.cuentas_por_cobrar.delete({ where: { id: parseInt(cuentaId) } });
+      // 3. LIMPIEZA TOTAL
+      await tx.inscripciones_deudas_link.deleteMany({ where: { cuenta_id: parseInt(cuentaId) } });
+      await tx.descuentos_aplicados.deleteMany({ where: { cuenta_id: parseInt(cuentaId) } });
+      await tx.pagos.deleteMany({ where: { cuenta_id: parseInt(cuentaId) } });
+      await tx.cuentas_por_cobrar.delete({ where: { id: parseInt(cuentaId) } });
 
-    if (cuenta.detalle_adicional.includes('RENOVACION')) {
-      await tx.inscripciones.updateMany({
+      if (cuenta.detalle_adicional.includes('RENOVACION')) {
+        await tx.inscripciones.updateMany({
+          where: {
+            id: { in: idsInscripciones },
+            estado: { in: ['PENDIENTE_PAGO', 'POR_VALIDAR'] }
+          },
+          data: { estado: 'ACTIVO' }
+        });
+
+        return { success: true };
+      }
+
+      const result = await tx.inscripciones.deleteMany({
         where: {
           id: { in: idsInscripciones },
           estado: { in: ['PENDIENTE_PAGO', 'POR_VALIDAR'] }
-        },
-        data: { estado: 'ACTIVO' }
+        }
       });
 
-      return { success: true };
+      return { success: true, borrados: result.count };
+    };
+
+    // 🚩 Si viene una tx externa (ej: desde validarPago), la reusamos.
+    // Si no, abrimos una propia (comportamiento actual, sin romper nada).
+    if (txExterna) {
+      return await ejecutar(txExterna);
     }
-
-    const result = await tx.inscripciones.deleteMany({
-      where: {
-        id: { in: idsInscripciones },
-        estado: { in: ['PENDIENTE_PAGO', 'POR_VALIDAR'] }
-      }
-    });
-
-    return { success: true, borrados: result.count };
-  };
-
-  // 🚩 Si viene una tx externa (ej: desde validarPago), la reusamos.
-  // Si no, abrimos una propia (comportamiento actual, sin romper nada).
-  if (txExterna) {
-    return await ejecutar(txExterna);
-  }
-  return await prisma.$transaction(ejecutar);
-},
+    return await prisma.$transaction(ejecutar);
+  },
 
   updateInscripcion: async (data) => {
     const { alumnoId, inscripcionId, horarioId, adminId } = data;
@@ -838,39 +838,39 @@ export const inscripcionService = {
   // 📅 ACTUALIZAR FECHA DE INICIO (Desde Validación de Pago)
   // =================================================================
   actualizarFechaInicioPorPago: async (cuentaId, nuevaFecha) => {
-  return await prisma.$transaction(async (tx) => {
-    const links = await tx.inscripciones_deudas_link.findMany({
-      where: { cuenta_id: Number.parseInt(cuentaId) }
-    });
+    return await prisma.$transaction(async (tx) => {
+      const links = await tx.inscripciones_deudas_link.findMany({
+        where: { cuenta_id: Number.parseInt(cuentaId) }
+      });
 
-    if (links.length === 0) {
-      throw new ApiError('No se encontraron inscripciones vinculadas a esta cuenta.', 404);
-    }
-
-    const idsInscripciones = links.map(l => l.inscripcion_id);
-    const fechaFormateada = dayjs.tz(nuevaFecha, TZ_LIMA).startOf('day').toDate();
-
-    await tx.inscripciones.updateMany({
-      where: { id: { in: idsInscripciones } },
-      data: {
-        fecha_inscripcion: fechaFormateada,
-        fecha_inscripcion_original: fechaFormateada,
-        actualizado_en: new Date()
+      if (links.length === 0) {
+        throw new ApiError('No se encontraron inscripciones vinculadas a esta cuenta.', 404);
       }
-    });
 
-    // 🚩 NUEVO: sincroniza el link con la fecha real ya confirmada
-    await tx.inscripciones_deudas_link.updateMany({
-      where: { cuenta_id: Number.parseInt(cuentaId) },
-      data: { fecha_inicio_ciclo: fechaFormateada }
-    });
+      const idsInscripciones = links.map(l => l.inscripcion_id);
+      const fechaFormateada = dayjs.tz(nuevaFecha, TZ_LIMA).startOf('day').toDate();
 
-    return { success: true, count: idsInscripciones.length, nueva_fecha: fechaFormateada };
-  });
-},
+      await tx.inscripciones.updateMany({
+        where: { id: { in: idsInscripciones } },
+        data: {
+          fecha_inscripcion: fechaFormateada,
+          fecha_inscripcion_original: fechaFormateada,
+          actualizado_en: new Date()
+        }
+      });
+
+      // 🚩 NUEVO: sincroniza el link con la fecha real ya confirmada
+      await tx.inscripciones_deudas_link.updateMany({
+        where: { cuenta_id: Number.parseInt(cuentaId) },
+        data: { fecha_inicio_ciclo: fechaFormateada }
+      });
+
+      return { success: true, count: idsInscripciones.length, nueva_fecha: fechaFormateada };
+    });
+  },
 
   inscribirIndividual: async (data, tx = null) => {
-    const { alumno_id, idHorario, fecha_inicio_electiva } = data;
+    const { alumno_id, idHorario, fecha_inicio_electiva, montoDividido } = data;
 
     const ejecutar = async (tx) => {
       await Validators.validarMuroDeDeuda(tx, alumno_id);
@@ -909,6 +909,7 @@ export const inscripcionService = {
       });
 
       let totalCobrar = Number(conceptoAplicar.precio_base);
+      if (montoDividido) totalCobrar = Number(montoDividido);
       let detalleCobro = [`Plan Individual`];
 
       // // Si en caso se puede incluir camiseta en clase individual, se descomenta.
@@ -975,15 +976,17 @@ export const inscripcionService = {
       //   }
       // });
 
-      await tx.notificaciones.create({
-        data: {
-          alumno_id: parseInt(alumno_id),
-          titulo: '✅ Inscripción por Clase Única Generada',
-          mensaje: `Se ha reservado tu cupo. Total: S/ ${totalCobrar.toFixed(2)}.`,
-          tipo: 'SUCCESS',
-          categoria: 'SISTEMA'
-        }
-      });
+      if (!montoDividido) {
+        await tx.notificaciones.create({
+          data: {
+            alumno_id: parseInt(alumno_id),
+            titulo: '✅ Inscripción por Clase Única Generada',
+            mensaje: `Se ha reservado tu cupo. Total: S/ ${totalCobrar.toFixed(2)}.`,
+            tipo: 'SUCCESS',
+            categoria: 'SISTEMA'
+          }
+        });
+      }
 
       return {
         mensaje: 'Inscripción procesada exitosamente.',
@@ -1006,15 +1009,22 @@ export const inscripcionService = {
   inscribirIndividualByAdmin: async (data) => {
     try {
       return await prisma.$transaction(async (tx) => {
+
+        const alumnoIds = [...new Set(data.map(d => d.alumno_id))];
+        if (alumnoIds.length !== 1) throw new ApiError("Se están registrando dos o más alumnos diferentes en el mismo proceso de inscripción individual.", 400);
+
         let results = [];
+        const divisor = data.length;
         for (const d of data) {
           const {
-            alumno_id, idHorario, fecha_inicio_electiva,
-            metodo_pago, codigo_operacion,
+            alumno_id, idHorario, fecha_inicio_electiva, montoTotal,
+            metodo_pago,
             usuario_admin_id
           } = d;
 
-          const dataInsc = await inscripcionService.inscribirIndividual({ alumno_id: Number(alumno_id), idHorario: Number(idHorario), fecha_inicio_electiva }, tx);
+          const montoDividido = Number(montoTotal / divisor);
+
+          const dataInsc = await inscripcionService.inscribirIndividual({ alumno_id: Number(alumno_id), idHorario: Number(idHorario), fecha_inicio_electiva, montoDividido }, tx);
 
           const deuda = await tx.inscripciones_deudas_link.findFirst({
             where: { inscripcion_id: dataInsc.inscripcion.id }
@@ -1023,7 +1033,7 @@ export const inscripcionService = {
           const deuda_id = deuda.cuenta_id;
           const monto = deuda.monto_asignado;
 
-          const dataPago = await pagosService.registrarPago({ deuda_id, monto, metodo_pago: Number(metodo_pago), codigo_operacion }, tx);
+          const dataPago = await pagosService.registrarPago({ deuda_id, monto, metodo_pago: Number(metodo_pago) }, tx);
 
           const pago_id = dataPago.pago.id;
           const accion = 'APROBAR';
@@ -1045,94 +1055,94 @@ export const inscripcionService = {
   // 📊 HISTORIAL HÍBRIDO (INSCRIPCIONES + MESES COBRADOS)
   // =================================================================
   obtenerHistorialCiclosAlumno: async (alumnoId) => {
-  try {
-    // 1. Buscamos todas las inscripciones del alumno y sus deudas asociadas
-    const inscripcionesBrutas = await prisma.inscripciones.findMany({
-      where: { alumno_id: parseInt(alumnoId) },
-      include: {
-        horarios_clases: {
-          include: {
-            canchas: { include: { sedes: true } },
-            niveles_entrenamiento: true,
-            coordinadores: { include: { usuarios: true } }
+    try {
+      // 1. Buscamos todas las inscripciones del alumno y sus deudas asociadas
+      const inscripcionesBrutas = await prisma.inscripciones.findMany({
+        where: { alumno_id: parseInt(alumnoId) },
+        include: {
+          horarios_clases: {
+            include: {
+              canchas: { include: { sedes: true } },
+              niveles_entrenamiento: true,
+              coordinadores: { include: { usuarios: true } }
+            }
+          },
+          inscripciones_deudas_link: {
+            include: {
+              cuentas_por_cobrar: true
+            },
+            orderBy: {
+              fecha_inicio_ciclo: 'asc' // 🚩 orden por vigencia real, no por creado_en
+            }
           }
         },
-        inscripciones_deudas_link: {
-          include: {
-            cuentas_por_cobrar: true
-          },
-          orderBy: {
-            fecha_inicio_ciclo: 'asc' // 🚩 orden por vigencia real, no por creado_en
-          }
+        orderBy: {
+          fecha_inscripcion: 'desc'
         }
-      },
-      orderBy: {
-        fecha_inscripcion: 'desc'
-      }
-    });
-
-    const historialMeses = [];
-
-    // 2. Procesamos cada inscripción para extraer sus "Meses" (Ciclos)
-    for (const inscripcion of inscripcionesBrutas) {
-      const hc = inscripcion.horarios_clases;
-      const linksDeuda = inscripcion.inscripciones_deudas_link;
-
-      // Si la inscripción no tiene cuentas por cobrar generadas, igual la mostramos como el mes inicial
-      if (linksDeuda.length === 0) {
-        historialMeses.push({
-          inscripcion_id: inscripcion.id,
-          estado_inscripcion: inscripcion.estado,
-          sede: hc?.canchas?.sedes?.nombre || 'S/D',
-          nivel: hc?.niveles_entrenamiento?.nombre || 'S/D',
-          profesor: hc?.coordinadores?.usuarios?.nombres || 'S/D',
-          tipo_inscripcion: inscripcion.tipo_inscripcion,
-
-          numero_mes_ciclo: 1,
-          fecha_inicio_ciclo: inscripcion.fecha_inscripcion,
-          fecha_fin_ciclo: null,
-          fecha_corte_ciclo: null,
-          estado_pago_mes: 'SIN_CUENTA',
-          monto_mes: 0,
-          cuenta_id: null
-        });
-        continue;
-      }
-
-      // Si tiene deudas, iteramos sobre cada una representando un "Mes"
-      linksDeuda.forEach((link, index) => {
-        const cuenta = link.cuentas_por_cobrar;
-
-        historialMeses.push({
-          inscripcion_id: inscripcion.id,
-          estado_inscripcion: inscripcion.estado,
-          sede: hc?.canchas?.sedes?.nombre || 'S/D',
-          nivel: hc?.niveles_entrenamiento?.nombre || 'S/D',
-          profesor: hc?.coordinadores?.usuarios?.nombres || 'S/D',
-          tipo_inscripcion: inscripcion.tipo_inscripcion,
-
-          numero_mes_ciclo: index + 1,
-          fecha_inicio_ciclo: link.fecha_inicio_ciclo,     // ✅ dato real, guardado en el link
-          fecha_fin_ciclo: link.fecha_fin_ciclo,            // ✅ null si sigue vigente
-          fecha_corte_ciclo: cuenta.fecha_vencimiento,      // se mantiene, sirve para saber el plazo de pago
-          estado_pago_mes: cuenta.estado,
-          monto_mes: Number(link.monto_asignado),
-          cuenta_id: cuenta.id,
-          es_estimado: link.es_estimado                     // ✅ bonus: para marcar en el front si es dato del backfill
-        });
       });
+
+      const historialMeses = [];
+
+      // 2. Procesamos cada inscripción para extraer sus "Meses" (Ciclos)
+      for (const inscripcion of inscripcionesBrutas) {
+        const hc = inscripcion.horarios_clases;
+        const linksDeuda = inscripcion.inscripciones_deudas_link;
+
+        // Si la inscripción no tiene cuentas por cobrar generadas, igual la mostramos como el mes inicial
+        if (linksDeuda.length === 0) {
+          historialMeses.push({
+            inscripcion_id: inscripcion.id,
+            estado_inscripcion: inscripcion.estado,
+            sede: hc?.canchas?.sedes?.nombre || 'S/D',
+            nivel: hc?.niveles_entrenamiento?.nombre || 'S/D',
+            profesor: hc?.coordinadores?.usuarios?.nombres || 'S/D',
+            tipo_inscripcion: inscripcion.tipo_inscripcion,
+
+            numero_mes_ciclo: 1,
+            fecha_inicio_ciclo: inscripcion.fecha_inscripcion,
+            fecha_fin_ciclo: null,
+            fecha_corte_ciclo: null,
+            estado_pago_mes: 'SIN_CUENTA',
+            monto_mes: 0,
+            cuenta_id: null
+          });
+          continue;
+        }
+
+        // Si tiene deudas, iteramos sobre cada una representando un "Mes"
+        linksDeuda.forEach((link, index) => {
+          const cuenta = link.cuentas_por_cobrar;
+
+          historialMeses.push({
+            inscripcion_id: inscripcion.id,
+            estado_inscripcion: inscripcion.estado,
+            sede: hc?.canchas?.sedes?.nombre || 'S/D',
+            nivel: hc?.niveles_entrenamiento?.nombre || 'S/D',
+            profesor: hc?.coordinadores?.usuarios?.nombres || 'S/D',
+            tipo_inscripcion: inscripcion.tipo_inscripcion,
+
+            numero_mes_ciclo: index + 1,
+            fecha_inicio_ciclo: link.fecha_inicio_ciclo,     // ✅ dato real, guardado en el link
+            fecha_fin_ciclo: link.fecha_fin_ciclo,            // ✅ null si sigue vigente
+            fecha_corte_ciclo: cuenta.fecha_vencimiento,      // se mantiene, sirve para saber el plazo de pago
+            estado_pago_mes: cuenta.estado,
+            monto_mes: Number(link.monto_asignado),
+            cuenta_id: cuenta.id,
+            es_estimado: link.es_estimado                     // ✅ bonus: para marcar en el front si es dato del backfill
+          });
+        });
+      }
+
+      // 3. Ordenar el resultado final por fecha de inicio real de ciclo
+      historialMeses.sort((a, b) => new Date(b.fecha_inicio_ciclo) - new Date(a.fecha_inicio_ciclo));
+
+      return historialMeses;
+
+    } catch (error) {
+      console.error(`❌ [ERROR OBTENER HISTORIAL MESES] Alumno: ${alumnoId} | ${error.message}`);
+      throw new ApiError('Error al obtener el historial de ciclos del alumno', 500);
     }
-
-    // 3. Ordenar el resultado final por fecha de inicio real de ciclo
-    historialMeses.sort((a, b) => new Date(b.fecha_inicio_ciclo) - new Date(a.fecha_inicio_ciclo));
-
-    return historialMeses;
-
-  } catch (error) {
-    console.error(`❌ [ERROR OBTENER HISTORIAL MESES] Alumno: ${alumnoId} | ${error.message}`);
-    throw new ApiError('Error al obtener el historial de ciclos del alumno', 500);
-  }
-},
+  },
 };
 
 
