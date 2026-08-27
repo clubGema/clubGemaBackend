@@ -342,6 +342,7 @@ export const asistenciaService = {
 
         return {
           id: `insc-recu-${rec.id}`,
+          alumno_id: rec.alumnos.usuario_id,
           estado: 'RECUPERACION',
           tipo_sesion: 'RECUPERACION',
           alumnos: rec.alumnos,
