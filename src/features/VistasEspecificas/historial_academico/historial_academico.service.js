@@ -226,9 +226,8 @@ export const historialAcademicoService = {
           .filter((c) => c.estado === 'PENDIENTE')
           .reduce((acc, c) => acc + Number(c.monto_final || 0), 0);
 
-        // --- Flag de Plan Individual: basta con UNA cuenta que cumpla ---
-        const esIndividual = cuentas.some((c) =>
-          esConceptoIndividual(c.catalogo_conceptos?.nombre, c.detalle_adicional)
+        const esIndividual = inscripciones.some((i) =>
+          i.tipo_inscripcion === 'INDIVIDUAL' && i.estado === 'ACTIVO'
         );
 
         // --- Misma prioridad que antes: vigentes > activas-vencidas > última ---
@@ -297,16 +296,16 @@ export const historialAcademicoService = {
     try {
       const whereSede = sedeId
         ? {
-            inscripciones_deudas_link: {
-              some: {
-                inscripciones: {
-                  horarios_clases: {
-                    canchas: { sede_id: parseInt(sedeId) },
-                  },
+          inscripciones_deudas_link: {
+            some: {
+              inscripciones: {
+                horarios_clases: {
+                  canchas: { sede_id: parseInt(sedeId) },
                 },
               },
             },
-          }
+          },
+        }
         : {};
 
       const cuentas = await prisma.cuentas_por_cobrar.findMany({
@@ -339,7 +338,7 @@ export const historialAcademicoService = {
       throw new ApiError('Error al obtener el resumen de planes individuales', 500);
     }
   },
-   obtenerDetalleAlumno: async (alumnoId) => {
+  obtenerDetalleAlumno: async (alumnoId) => {
     const id = parseInt(alumnoId);
     if (!id) throw new ApiError('ID de alumno inválido', 400);
 
