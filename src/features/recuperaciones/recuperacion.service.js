@@ -65,8 +65,8 @@ const registrarFaltaPendiente = async (tx, alumnoId, fechaFalta, asistenciaId) =
   const diffFalta = fechaFaltaDate - inicioInscripcion;
   const diasTranscurridosFalta = Math.floor(diffFalta / (1000 * 60 * 60 * 24));
 
-  if (diasTranscurridosFalta < 0) {
-    console.log(`ID Alumno ${alumnoId}: La fecha de la falta es anterior a la fecha de inscripción, no se generó ticket de recuperación.`);
+  if (diasTranscurridosFalta < -30) {
+    console.log(`ID Alumno ${alumnoId}: La fecha de la falta pasa los 30 días antes de la fecha de inscripción, no se generó ticket de recuperación.`);
     return null;
   }
 
