@@ -4,6 +4,11 @@ import { notificacionesService } from '../notificaciones/notificaciones.service.
 import { twilioProvider } from '../../shared/services/twilio.whatsapp.service.js';
 import { emailService } from '../../shared/services/brevo.email.service.js';
 import { inscripcionService } from './inscripcion.service.js';
+import { merchService } from '../merch/merch.service.js';
+import { DIAS_CICLO, aFechaUTC, diaLimaAFechaUTC } from '../../shared/utils/ciclo.util.js';
+// 🎯 BL-001
+import { TIPO_INSCRIPCION, esIndividual, whereTipoInscripcion } from '../../shared/utils/tipo-inscripcion.util.js';
+import { DIAS_VENTANA_INDIVIDUAL } from '../../shared/utils/clase-fecha.util.js';
 
 // 🔥 IMPORTAMOS EL SID DE LA PLANTILLA DESDE TUS SECRETOS 🔥
 import { TWILIO_TEMPLATE_PAGO_PARCIAL_SID, TWILIO_TEMPLATE_VENCIMIENTO_SID } from '../../config/secret.config.js';
@@ -87,7 +92,8 @@ class InscripcionCronService {
                 where: { cuenta_id: cuentaId }
               });
 
-              // PASO C: Borrar la CUENTA
+              // PASO C: Borrar la CUENTA (el merch reservado devuelve su stock)
+              await merchService.liberarMerchDeCuenta(tx, cuentaId);
               await tx.cuentas_por_cobrar.delete({
                 where: { id: cuentaId }
               });
@@ -112,8 +118,16 @@ class InscripcionCronService {
     logger.info(`[VERDUGO] Iniciando revisión de ciclos. Hoy: ${hoyLima.format('YYYY-MM-DD')}`);
 
     try {
+      // 🚩 BL-001: el VERDUGO es el cron del CICLO DE 30 DÍAS, así que solo le
+      // toca a las REGULAR. Antes barría todo lo ACTIVO y aplicaba la regla de
+      // 30 días también a las clases sueltas, compitiendo con
+      // gestionarVencimientosIndividual (01:00 vs 01:05): ganaba el que corría
+      // primero.
       const inscripcionesActivas = await prisma.inscripciones.findMany({
-        where: { estado: 'ACTIVO' }
+        where: {
+          estado: 'ACTIVO',
+          ...whereTipoInscripcion(TIPO_INSCRIPCION.REGULAR),
+        }
       });
 
       let totalFinalizados = 0;
@@ -123,9 +137,12 @@ class InscripcionCronService {
           const fechaInicio = dayjs(insc.fecha_inscripcion).tz('America/Lima').startOf('day');
           const diasTranscurridos = hoyLima.diff(fechaInicio, 'day');
 
-          if (diasTranscurridos >= 30) {
+          if (diasTranscurridos >= DIAS_CICLO) {
             // 🚩 Cierre real del ciclo: día 30 exacto, no "hoy" (que puede traer tolerancia)
-            const fechaFinCicloReal = fechaInicio.add(30, 'day').toDate();
+            // 🔧 BL-011: a mediodía, para que el truncado a @db.Date no dependa
+            // de que las 05:00Z caigan en el día correcto. DIAS_CICLO vive en
+            // shared/utils/ciclo.util.js, que es la única definición del largo.
+            const fechaFinCicloReal = fechaInicio.add(DIAS_CICLO, 'day').hour(12).toDate();
 
             await prisma.$transaction(async (tx) => {
               await tx.inscripciones.update({
@@ -187,22 +204,67 @@ class InscripcionCronService {
 
       for (const insc of inscripcionesActivas) {
         try {
-          if (!insc.registros_asistencia[0]) continue;
-          const fechaInicio = dayjs(insc.registros_asistencia[0].fecha.toISOString().slice(0, 10)).startOf('day');
+          const asistencia = insc.registros_asistencia[0];
 
-          const diasTranscurridos = hoyLima.diff(fechaInicio, 'day');
+          // =================================================================
+          // 🚩 BL-001: dos caminos, porque desde que el VERDUGO filtra por
+          // REGULAR este cron es el ÚNICO que puede finalizar una INDIVIDUAL.
+          //
+          // Antes, una INDIVIDUAL ACTIVO sin registros de asistencia hacía
+          // `continue` y acababa muriendo a los 30 días por el VERDUGO. Al
+          // sacarla de su barrido, ese `continue` la dejaría ACTIVO PARA
+          // SIEMPRE — y como validarAforoHorario cuenta los ACTIVO, cada una
+          // se comería un cupo de forma indefinida. De ahí el fallback.
+          // =================================================================
+          let diasTranscurridos;
+          let fechaCierreCiclo;
+
+          if (asistencia) {
+            const fechaClase = dayjs(asistencia.fecha.toISOString().slice(0, 10)).startOf('day');
+            diasTranscurridos = hoyLima.diff(fechaClase, 'day');
+            // El ciclo de una clase suelta cierra el día de la clase.
+            // 🔧 BL-011: fecha_fin_ciclo es @db.Date; normalizamos con aFechaUTC
+            // en vez de un new Date() que Postgres truncaría al día UTC
+            // equivocado según la hora de Lima.
+            fechaCierreCiclo = aFechaUTC(asistencia.fecha);
+          } else {
+            // Sin asistencia generada: se usa la fecha de inscripción y se
+            // espera la ventana completa de la clase suelta antes de matarla.
+            const fechaInscripcion = dayjs(insc.fecha_inscripcion).tz(TZ_LIMA).startOf('day');
+            diasTranscurridos = hoyLima.diff(fechaInscripcion, 'day');
+            if (diasTranscurridos < DIAS_VENTANA_INDIVIDUAL) continue;
+            fechaCierreCiclo = diaLimaAFechaUTC();
+          }
 
           if (diasTranscurridos >= 1) {
-            await prisma.inscripciones.update({
-              where: { id: insc.id },
-              data: {
-                estado: 'FINALIZADO',
-                actualizado_en: new Date(),
-              }
+            await prisma.$transaction(async (tx) => {
+              await tx.inscripciones.update({
+                where: { id: insc.id },
+                data: {
+                  estado: 'FINALIZADO',
+                  actualizado_en: new Date(),
+                }
+              });
+
+              // 🚩 BL-001: cerramos el ciclo del link. Antes este cron
+              // finalizaba la inscripción pero dejaba fecha_fin_ciclo en null
+              // PARA SIEMPRE, y finCicloEfectivo() le derivaba inicio + 30d, así
+              // que una clase suelta se reportaba como ciclo mensual abierto.
+              // Mismo patrón que ya usa el VERDUGO y las finalizaciones
+              // voluntarias.
+              await tx.inscripciones_deudas_link.updateMany({
+                where: {
+                  inscripcion_id: insc.id,
+                  fecha_fin_ciclo: null
+                },
+                data: {
+                  fecha_fin_ciclo: fechaCierreCiclo
+                }
+              });
             });
 
             totalFinalizados++;
-            logger.info(`[VENCIMIENTO INDIVIDUAL] ✅ Slot ${insc.id} liquidado (Días transcurridos: ${diasTranscurridos}).`);
+            logger.info(`[VENCIMIENTO INDIVIDUAL] ✅ Slot ${insc.id} liquidado (Días transcurridos: ${diasTranscurridos}) y ciclo cerrado en ${fechaCierreCiclo.toISOString()}.`);
           }
         } catch (innerError) {
           logger.error(`[VENCIMIENTO INDIVIDUAL ERROR] ID ${insc.id}: ${innerError.message}`);
@@ -298,8 +360,15 @@ class InscripcionCronService {
 
     for (const { alumno_id } of morososParciales) {
       // 3. Buscamos su Fecha Madre para calcular el ciclo
+      // 🚩 BL-001: la "fecha madre" del ciclo mensual solo puede salir de una
+      // inscripción REGULAR. Antes podía tomar una clase suelta y calcular el
+      // ciclo del alumno a 30 días de una clase de un día.
       const inscripcionMadre = await prisma.inscripciones.findFirst({
-        where: { alumno_id: alumno_id, estado: 'ACTIVO' },
+        where: {
+          alumno_id: alumno_id,
+          estado: 'ACTIVO',
+          ...whereTipoInscripcion(TIPO_INSCRIPCION.REGULAR),
+        },
         orderBy: { fecha_inscripcion: 'asc' },
       });
 
@@ -307,9 +376,10 @@ class InscripcionCronService {
 
       // 4. Calculamos fin de mes (Fecha Madre + 30 días)
       // 🔥 CAMBIO AQUÍ: Sumamos 30 días y calculamos el inicio de ese día en hora de Lima
+      // 🔧 BL-001: DIAS_CICLO en vez del 30 literal (ciclo.util.js es la única definición).
       const finCiclo = dayjs(inscripcionMadre.fecha_inscripcion)
         .tz(TZ_LIMA)
-        .add(30, 'day')
+        .add(DIAS_CICLO, 'day')
         .startOf('day');
 
       // 5. Calculamos el "Día del Juicio"
@@ -319,13 +389,36 @@ class InscripcionCronService {
       // 6. ¿Llegó el momento de liquidar?
       // 🔥 CAMBIO AQUÍ: Comparamos directamente con el valor absoluto en milisegundos (.valueOf())
       if (hoyLimaInicioDia.valueOf() >= diaDelJuicioParcial.valueOf()) {
+        // 🚩 BL-001: resolvemos los IDs a liquidar ANTES de la transacción, por
+        // dos motivos: (a) solo deben caer las REGULAR — antes el updateMany
+        // mataba TODAS las ACTIVO del alumno, incluidas clases sueltas ya
+        // pagadas por una deuda mensual ajena; (b) con los IDs en mano podemos
+        // cerrar también fecha_fin_ciclo de sus links, que este cron dejaba en
+        // null para siempre (mismo bug que BL-011 arregló en otros sitios).
+        const aLiquidar = await prisma.inscripciones.findMany({
+          where: {
+            alumno_id: alumno_id,
+            estado: 'ACTIVO',
+            ...whereTipoInscripcion(TIPO_INSCRIPCION.REGULAR),
+          },
+          select: { id: true },
+        });
+        const idsALiquidar = aLiquidar.map((i) => i.id);
+
+        if (idsALiquidar.length === 0) continue;
+
         // 7. La Ejecución Letal con Notificación vinculada
         await prisma.$transaction([
           // Matamos inscripciones activas
           prisma.inscripciones.updateMany({
-            where: { alumno_id: alumno_id, estado: 'ACTIVO' },
+            where: { id: { in: idsALiquidar } },
             // 🔥 CAMBIO AQUÍ: Convertimos de nuevo a Date nativo para Prisma
             data: { estado: 'FINALIZADO', actualizado_en: dayjs().toDate() },
+          }),
+          // 🚩 BL-001: cerramos el ciclo de deuda que quedaba abierto.
+          prisma.inscripciones_deudas_link.updateMany({
+            where: { inscripcion_id: { in: idsALiquidar }, fecha_fin_ciclo: null },
+            data: { fecha_fin_ciclo: diaLimaAFechaUTC() },
           }),
           // 🔥 PENALIDAD: Pierde su estatus de alumno antiguo por moroso (La deuda PARCIAL se queda intacta)
           prisma.alumnos.update({
@@ -398,6 +491,10 @@ class InscripcionCronService {
 
       if (!inscripcion || !usuario || !usuario.telefono_personal) continue;
 
+      // 🚩 BL-001: el aviso de 22 días es de ciclo mensual. Una clase suelta no
+      // tiene día 22, así que se descarta (antes recibía el WhatsApp igual).
+      if (esIndividual(inscripcion)) continue;
+
       // Calculamos el día 22 de ESTA inscripción en específico
       const diaAviso22 = dayjs(inscripcion.fecha_inscripcion)
         .tz(TZ_LIMA)
@@ -469,9 +566,13 @@ class InscripcionCronService {
 
     // 1. Buscamos DIRECTAMENTE las inscripciones ACTIVAS
     // Ignoramos completamente si tienen deuda o no, solo nos importa su ciclo actual.
+    // 🚩 BL-001: esta plantilla avisa "tu MENSUALIDAD vence el día X". Antes
+    // barría todo lo ACTIVO, así que un alumno que solo compró una clase suelta
+    // recibía un WhatsApp de renovación mensual (con costo de Twilio).
     const inscripcionesActivas = await prisma.inscripciones.findMany({
       where: {
-        estado: 'ACTIVO'
+        estado: 'ACTIVO',
+        ...whereTipoInscripcion(TIPO_INSCRIPCION.REGULAR)
       },
       include: {
         alumnos: {

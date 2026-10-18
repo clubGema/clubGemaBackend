@@ -2,38 +2,109 @@ import { prisma } from '../../config/database.config.js';
 import { recuperacionService } from '../recuperaciones/recuperacion.service.js';
 import dayjs from 'dayjs';
 
+// 🔧 BL-003: `calcularProximasFechas` vivía acá como const privado y era la
+// única definición de "¿en qué día cae la clase?". BL-003 necesita esa
+// respuesta ANTES de crear la inscripción (para validar feriado y aforo de esa
+// fecha), así que se movió a shared/utils/clase-fecha.util.js tal cual, sin
+// duplicarla. Ver la cabecera de ese archivo: NO reescribir su aritmética a UTC.
+import {
+  DIAS_VENTANA_INDIVIDUAL,
+  calcularFechasPorConteo,
+  calcularProximasFechas,
+  siguienteOcurrenciaSemanal,
+} from '../../shared/utils/clase-fecha.util.js';
+import { separarClasesParaCambio } from '../../shared/utils/cambio-horario.util.js';
+// 🔧 BL-001: el 30 estaba hardcodeado acá como cuarta copia de la constante.
+import { DIAS_CICLO, parsearFechaInicioCiclo } from '../../shared/utils/ciclo.util.js';
+import { ApiError } from '../../shared/utils/error.util.js';
+import { esIndividual } from '../../shared/utils/tipo-inscripcion.util.js';
+import {
+  cargarFeriadosActivos,
+  claveDiaDesdeFecha,
+  buscarFeriado,
+} from '../../shared/utils/feriado.util.js';
+// 🤝 BL-010: slots que el alumno ya tiene ocupados por una recuperación.
+import {
+  cargarSlotsRecuperacion,
+  buscarChoqueRecuperacion,
+  claveSlot,
+} from '../../shared/utils/recuperacion-slot.util.js';
+import { formatHoraUTC } from '../../shared/utils/date.util.js';
+
+// 🎉 BL-003: cuántas veces se intenta correr una clase suelta hacia adelante
+// (+7 días cada vez) cuando cae en feriado, antes de rendirse y dejarla en su
+// fecha original. 4 intentos = casi un mes de margen.
+const MAX_SALTOS_POR_FERIADO = 4;
+
 /**
- * Función auxiliar para calcular fechas DENTRO DE UN RANGO (Dinámico) 📅
- * Garantiza que la primera clase sea IGUAL o POSTERIOR a la fecha de inicio.
+ * 🤝 BL-010: detecta las fechas de un bloque de clases que coinciden EXACTAMENTE
+ * (mismo día + misma hora de inicio) con una recuperación PROGRAMADA del alumno.
+ *
+ * Regla de negocio: el backend NO reubica ni omite nada. Un choque aborta la
+ * generación con un 409 (ver `lanzarSiHayChoques`) y el administrador decide.
+ *
+ * Pura y sincrónica: nunca consulta ni lanza. El índice sale de
+ * `cargarSlotsRecuperacion`, que ya filtra por estado PROGRAMADA.
+ *
+ * @returns {{fecha: string, hora: string, recuperacion_id: number, estado_recuperacion: string}[]}
+ *   en orden cronológico
  */
-const calcularProximasFechas = (fechaInicio, diaSemanaClase, fechaLimite) => {
-  const fechas = [];
-  const fechaActual = new Date(fechaInicio);
-  const diaSemanaNormalizado = diaSemanaClase === 7 ? 0 : Number(diaSemanaClase);
-
-  if (!Number.isInteger(diaSemanaNormalizado) || diaSemanaNormalizado < 0 || diaSemanaNormalizado > 6) {
-    throw new Error(`Dia de semana invalido para generar clases: ${diaSemanaClase}`);
+// 🧪 Se exporta para testearla sin base de datos. No forma parte de
+// `asistenciaService`, así que no toca ninguna superficie HTTP.
+export const detectarChoquesCiclo = ({ fechas, horaInicio, indiceRecuperaciones }) => {
+  // Sin hora no hay slot que comparar (horario sin hora_inicio) y sin índice no
+  // hay nada contra lo que chocar.
+  if (!horaInicio || !indiceRecuperaciones || indiceRecuperaciones.porSlot.size === 0) {
+    return [];
   }
 
-  // 🔥 CORRECCIÓN DE ZONA HORARIA (Mediodía para evitar saltos de día)
-  fechaActual.setHours(12, 0, 0, 0);
+  const choques = [];
 
-  const limiteFijo = new Date(fechaLimite);
-  limiteFijo.setHours(12, 0, 0, 0);
+  for (const fecha of fechas) {
+    const choque = buscarChoqueRecuperacion(claveSlot(fecha, horaInicio), indiceRecuperaciones);
+    if (!choque) continue;
 
-  // 1. Buscamos el primer día de clase válido que sea >= fechaInicio
-  // Si la fechaInicio ya coincide con diaSemanaClase, se queda ahí.
-  const diasHastaPrimeraClase = (diaSemanaNormalizado - fechaActual.getDay() + 7) % 7;
-  fechaActual.setDate(fechaActual.getDate() + diasHastaPrimeraClase);
-
-  // 2. Generamos fechas MIENTRAS no superemos el límite de los 30 días
-  // Importante: Si la primera fecha encontrada ya se pasó del límite, no agrega nada.
-  while (fechaActual <= limiteFijo) {
-    fechas.push(new Date(fechaActual));
-    fechaActual.setDate(fechaActual.getDate() + 7);
+    choques.push({
+      fecha: claveDiaDesdeFecha(fecha),
+      hora: formatHoraUTC(horaInicio),
+      recuperacion_id: choque.id,
+      estado_recuperacion: choque.estado,
+    });
   }
 
-  return fechas;
+  return choques.sort((a, b) => a.fecha.localeCompare(b.fecha));
+};
+
+/**
+ * 🤝 BL-010: convierte los choques en un 409 Conflict.
+ *
+ * Se lanza ANTES de insertar nada. Como los llamadores reales corren dentro de
+ * una `$transaction` (validarPago, updateInscripcion), el throw la revierte
+ * completa: el pago queda pendiente / el horario anterior se conserva.
+ *
+ * Forma del JSON (la arma error.middleware con ApiError):
+ *   { success: 'error', message,
+ *     details: { codigo, fecha, hora, inscripcion_id, choques: [...] } }
+ * `fecha`/`hora` son las del primer choque; `choques` los trae todos.
+ */
+export const lanzarSiHayChoques = (choques, inscripcionId) => {
+  if (!choques || choques.length === 0) return;
+
+  const [primero] = choques;
+  const [anio, mes, dia] = primero.fecha.split('-');
+  const resto = choques.length > 1 ? ` (+${choques.length - 1} choque(s) más)` : '';
+
+  throw new ApiError(
+    `Choque con una clase de recuperación ya programada: el ${dia}/${mes}/${anio} a las ${primero.hora}${resto}.`,
+    409,
+    {
+      codigo: 'CHOQUE_RECUPERACION',
+      fecha: primero.fecha,
+      hora: primero.hora,
+      inscripcion_id: inscripcionId ?? null,
+      choques,
+    }
+  );
 };
 
 export const asistenciaService = {
@@ -45,7 +116,57 @@ export const asistenciaService = {
     // 🔥 Desestructuramos incluyendo el nuevo parámetro fecha_inicio
     const { inscripcion_id, dia_semana, usuario_admin_id, coordinador_id, fecha_inicio } = params;
 
-    const DIAS_CICLO = 30;
+    // =================================================================
+    // 🛡️ BL-001: GUARDIA DE TIPO (REGULAR vs INDIVIDUAL)
+    //
+    // Una inscripción INDIVIDUAL es una clase suelta: nunca debe recibir el
+    // ciclo de 30 días. Esa bifurcación ya la hacía pagos.service.js, pero era
+    // el ÚNICO sitio del backend que la hacía — updateInscripcion (cambio de
+    // horario) llamaba acá directo y le generaba 30 clases a una clase suelta.
+    // Esta guardia blinda a cualquier llamador, presente o futuro.
+    //
+    // `tipo_inscripcion` se puede pasar por params para ahorrar la consulta
+    // cuando el llamador ya tiene la fila en mano (extensión retrocompatible:
+    // si no viene, se lee).
+    // =================================================================
+    // 🤝 BL-010: `alumno_id` y `hora_inicio` se leen en la MISMA consulta que el
+    // tipo (hacen falta para detectar el choque con recuperaciones). Igual que
+    // `tipo_inscripcion` en BL-001, se pueden pasar por params cuando el
+    // llamador ya tiene la fila en mano, y entonces no se consulta nada.
+    let tipo = params.tipo_inscripcion;
+    let alumnoId = params.alumno_id;
+    let horaInicio = params.hora_inicio;
+
+    if (tipo === undefined || alumnoId === undefined || horaInicio === undefined) {
+      const inscripcion = await tx.inscripciones.findUnique({
+        where: { id: inscripcion_id },
+        select: {
+          tipo_inscripcion: true,
+          alumno_id: true,
+          horarios_clases: { select: { hora_inicio: true } },
+        },
+      });
+      if (tipo === undefined) tipo = inscripcion?.tipo_inscripcion ?? null;
+      if (alumnoId === undefined) alumnoId = inscripcion?.alumno_id ?? null;
+      if (horaInicio === undefined) horaInicio = inscripcion?.horarios_clases?.hora_inicio ?? null;
+    }
+
+    if (esIndividual(tipo)) {
+      console.log(
+        `🎟️ Inscripción ${inscripcion_id} es INDIVIDUAL: se genera 1 clase suelta, no un ciclo de ${DIAS_CICLO} días.`
+      );
+      return await asistenciaService.generarClaseUnica(tx, {
+        inscripcion_id,
+        dia_semana,
+        coordinador_id,
+        fecha_inicio,
+        // 🤝 BL-010: se propagan para que la clase suelta también se valide
+        // contra las recuperaciones sin repetir la consulta.
+        alumno_id: alumnoId,
+        hora_inicio: horaInicio,
+        dryRun: params.dryRun,
+      });
+    }
 
     // =================================================================
     // 🧠 LÓGICA DE PUNTO DE PARTIDA (Prioridad de Negocio)
@@ -86,10 +207,25 @@ export const asistenciaService = {
     fechaLimite.setDate(fechaLimite.getDate() + (DIAS_CICLO - 1));
 
     // 2. Calculamos las fechas reales de clase dentro de este ciclo
-    const fechasClases = calcularProximasFechas(fechaInicioCalculo, dia_semana, fechaLimite);
+    const fechasPlanificadas = calcularProximasFechas(fechaInicioCalculo, dia_semana, fechaLimite);
+
+    // =================================================================
+    // 🤝 BL-010: si alguna fecha del ciclo coincide con una recuperación
+    // PROGRAMADA del alumno, se aborta con 409 ANTES de insertar nada. Una sola
+    // consulta para las ~5 fechas del ciclo.
+    // =================================================================
+    const indiceRecuperaciones = alumnoId ? await cargarSlotsRecuperacion(tx, alumnoId) : null;
+
+    lanzarSiHayChoques(
+      detectarChoquesCiclo({ fechas: fechasPlanificadas, horaInicio, indiceRecuperaciones }),
+      inscripcion_id
+    );
+
+    // 🔍 `dryRun`: solo validar (ver `validarChoquesCiclo`). No inserta.
+    if (params.dryRun) return fechasPlanificadas.length;
 
     // 3. Preparamos los objetos para insertar
-    const datosAsistencia = fechasClases.map((fecha) => ({
+    const datosAsistencia = fechasPlanificadas.map((fecha) => ({
       inscripcion_id: inscripcion_id,
       fecha: fecha,
       estado: 'PROGRAMADA',
@@ -111,6 +247,125 @@ export const asistenciaService = {
 
     return datosAsistencia.length;
   },
+
+  /**
+   * 🔢 Genera EXACTAMENTE `cantidad` clases, una por semana desde `fecha_inicio`,
+   * saltando feriados sin consumir cupo. Es la generación del cambio de horario
+   * (ver cambio-horario.util.js): el recurso son clases, no días calendario.
+   *
+   * No aplica la guardia INDIVIDUAL a propósito: el llamador (updateInscripcion)
+   * ya bifurca por tipo.
+   *
+   * 🤝 BL-010: lanza 409 ANTES de insertar si alguna fecha choca con una
+   * recuperación PROGRAMADA (la $transaction del llamador lo revierte todo).
+   *
+   * @returns {Promise<Date[]>} las fechas generadas, en orden. La última es el
+   *   fin real del ciclo.
+   */
+  generarClasesPorConteo: async (tx, params) => {
+    const { inscripcion_id, dia_semana, usuario_admin_id, coordinador_id, fecha_inicio, cantidad } =
+      params;
+
+    if (!Number.isInteger(cantidad) || cantidad <= 0) return [];
+    if (!fecha_inicio) {
+      throw new ApiError('Se requiere fecha_inicio para generar clases por conteo.', 400);
+    }
+
+    let alumnoId = params.alumno_id;
+    let horaInicio = params.hora_inicio;
+    if (alumnoId === undefined || horaInicio === undefined) {
+      const inscripcion = await tx.inscripciones.findUnique({
+        where: { id: inscripcion_id },
+        select: { alumno_id: true, horarios_clases: { select: { hora_inicio: true } } },
+      });
+      if (alumnoId === undefined) alumnoId = inscripcion?.alumno_id ?? null;
+      if (horaInicio === undefined) horaInicio = inscripcion?.horarios_clases?.hora_inicio ?? null;
+    }
+
+    const feriados = params.feriados ?? (await cargarFeriadosActivos(tx));
+    const fechas = calcularFechasPorConteo(fecha_inicio, dia_semana, cantidad, {
+      esFeriado: (fecha) => !!buscarFeriado(claveDiaDesdeFecha(fecha), feriados),
+    });
+
+    const indiceRecuperaciones = alumnoId ? await cargarSlotsRecuperacion(tx, alumnoId) : null;
+    lanzarSiHayChoques(
+      detectarChoquesCiclo({ fechas, horaInicio, indiceRecuperaciones }),
+      inscripcion_id
+    );
+
+    if (params.dryRun) return fechas;
+
+    await tx.registros_asistencia.createMany({
+      data: fechas.map((fecha) => ({
+        inscripcion_id,
+        fecha,
+        estado: 'PROGRAMADA',
+        registrado_por: coordinador_id,
+        comentario: `Generado auto (Cambio de horario, ${cantidad} clases) - Admin ID: ${usuario_admin_id}`,
+      })),
+      skipDuplicates: true,
+    });
+
+    console.log(
+      `✅ Cambio de horario: ${fechas.length} clases para ID ${inscripcion_id} (última: ${fechas[fechas.length - 1].toLocaleDateString()})`
+    );
+
+    return fechas;
+  },
+
+  /**
+   * 🔢 Primera mitad del cambio de horario REGULAR: separa las clases del ciclo
+   * actual en conservadas y a eliminar (ver `separarClasesParaCambio`), borra
+   * las segundas y devuelve cuántas clases ya consumió el alumno.
+   *
+   * `inicioCiclo` acota por abajo: las clases de ciclos anteriores de la misma
+   * inscripción no se tocan ni cuentan.
+   *
+   * @returns {Promise<{consumidas: number, eliminadas: number}>}
+   */
+  depurarClasesParaCambioHorario: async (tx, { inscripcion_id, inicioCiclo, claveEfectiva }) => {
+    const clases = await tx.registros_asistencia.findMany({
+      where: { inscripcion_id, fecha: { gte: inicioCiclo } },
+      select: { id: true, fecha: true, estado: true },
+    });
+
+    const { idsAEliminar, consumidas } = separarClasesParaCambio(clases, claveEfectiva);
+
+    if (idsAEliminar.length > 0) {
+      await tx.registros_asistencia.deleteMany({ where: { id: { in: idsAEliminar } } });
+    }
+
+    return { consumidas, eliminadas: idsAEliminar.length };
+  },
+
+  /**
+   * 🔢 Segunda mitad: las clases conservadas pasan a la inscripción nueva, que es
+   * la dueña del link del ciclo. Sin esto el ciclo vigente quedaría con las
+   * clases ya dictadas colgando de una inscripción FINALIZADA.
+   *
+   * Seguro contra @@unique([inscripcion_id, fecha]): se llama antes de generar
+   * las clases nuevas, así que la inscripción destino está vacía.
+   */
+  trasladarClasesDelCiclo: async (tx, { desde, hacia, inicioCiclo }) => {
+    const { count } = await tx.registros_asistencia.updateMany({
+      where: { inscripcion_id: desde, fecha: { gte: inicioCiclo } },
+      data: { inscripcion_id: hacia },
+    });
+    return count;
+  },
+
+  /**
+   * 🤝 BL-010: pre-validación SIN efectos. Calcula exactamente las fechas que
+   * generaría `generarClasesFuturas` (misma ruta de código, vía `dryRun`) y
+   * lanza el 409 si alguna choca con una recuperación PROGRAMADA. No inserta.
+   *
+   * Existe para que `validarPago` falle ANTES de mutar nada (inscripción,
+   * ciclo, link), en vez de depender solo del rollback.
+   *
+   * @returns {Promise<number>} cantidad de clases que se generarían
+   */
+  validarChoquesCiclo: async (tx, params) =>
+    asistenciaService.generarClasesFuturas(tx, { ...params, dryRun: true }),
 
   obtenerHistorial: async (inscripcionId) => {
     return await prisma.registros_asistencia.findMany({
@@ -695,15 +950,105 @@ export const asistenciaService = {
     return registros.count;
   },
 
+  /**
+   * 🎟️ BL-003: genera la ÚNICA clase de una inscripción INDIVIDUAL.
+   *
+   * @param {object} params
+   * @param {object|null} [params.feriados] índice ya cargado con
+   *   `cargarFeriadosActivos` (evita reconsultar si el llamador ya lo tiene).
+   * @param {boolean} [params.reprogramarSiFeriado=true]
+   * @returns {Promise<number>} cuántos registros se insertaron.
+   *
+   * ⚠️ ESTA FUNCIÓN NO LANZA NUNCA POR FERIADO, a propósito.
+   * El llamador real es pagos.service.js -> validarPago, dentro de una
+   * $transaction. Si lanzara, un feriado creado por el admin DESPUÉS de la
+   * venta abortaría la transacción del pago: dinero ya recibido, pago sin
+   * aprobar y cuenta en PENDIENTE. La validación dura vive en
+   * inscribirIndividual (antes de cobrar); acá solo se corre la fecha.
+   *
+   * 🤝 BL-010: SÍ lanza un 409 (ApiError) si la fecha final coincide con una
+   * recuperación PROGRAMADA del alumno. A diferencia del feriado, es un choque
+   * que el admin debe resolver, y validarPago lo pre-valida antes de mutar.
+   * `params.dryRun` valida sin insertar.
+   */
   generarClaseUnica: async (tx, params) => {
-    const { inscripcion_id, dia_semana, coordinador_id, fecha_inicio } = params;
+    const {
+      inscripcion_id,
+      dia_semana,
+      coordinador_id,
+      fecha_inicio,
+      feriados = null,
+      reprogramarSiFeriado = true,
+    } = params;
 
-    const fechaInicioCalculo = new Date(fecha_inicio);
+    // Si el llamador no manda fecha_inicio, arrancamos hoy (antes esto producía
+    // un Invalid Date silencioso).
+    const fechaInicioCalculo = fecha_inicio ? new Date(fecha_inicio) : new Date();
 
     const fechaLimite = new Date(fechaInicioCalculo);
-    fechaLimite.setDate(fechaLimite.getDate() + 6);
+    fechaLimite.setDate(fechaLimite.getDate() + (DIAS_VENTANA_INDIVIDUAL - 1));
 
-    const fechasClases = calcularProximasFechas(fechaInicioCalculo, dia_semana, fechaLimite);
+    let fechasClases = calcularProximasFechas(fechaInicioCalculo, dia_semana, fechaLimite);
+
+    // 🎉 BL-003: si la fecha cayó en feriado, la corremos +7 días (misma
+    // ocurrencia semanal) hasta MAX_SALTOS_POR_FERIADO intentos. Si no hay
+    // hueco, se deja la fecha original (comportamiento previo) y se loguea.
+    if (reprogramarSiFeriado && fechasClases.length > 0) {
+      const indiceFeriados = feriados ?? (await cargarFeriadosActivos(tx));
+
+      let fechaCandidata = fechasClases[0];
+      let saltos = 0;
+      let feriadoDetectado = buscarFeriado(claveDiaDesdeFecha(fechaCandidata), indiceFeriados);
+
+      while (feriadoDetectado && saltos < MAX_SALTOS_POR_FERIADO) {
+        console.warn(
+          `🎉 Clase individual de inscripción ${inscripcion_id} cae en feriado (${feriadoDetectado.descripcion}). Corriendo +7 días.`
+        );
+        // 🔧 BL-010: el `+7` inline se movió a clase-fecha.util.js para que el
+        // salto por feriado y el salto por choque no puedan divergir.
+        fechaCandidata = siguienteOcurrenciaSemanal(fechaCandidata);
+        saltos += 1;
+        feriadoDetectado = buscarFeriado(claveDiaDesdeFecha(fechaCandidata), indiceFeriados);
+      }
+
+      if (feriadoDetectado) {
+        console.warn(
+          `⚠️ Inscripción ${inscripcion_id}: no se halló fecha libre de feriados en ${MAX_SALTOS_POR_FERIADO} intentos. Se deja la fecha original para NO romper el pago.`
+        );
+      } else {
+        fechasClases = [fechaCandidata];
+      }
+    }
+
+    // =================================================================
+    // 🤝 BL-010: una clase suelta también puede caer sobre una recuperación ya
+    // agendada. Se valida DESPUÉS del feriado (primero el día no laborable,
+    // después el slot) y, si choca, se aborta con 409 antes de insertar.
+    // =================================================================
+    if (fechasClases.length > 0) {
+      let alumnoId = params.alumno_id;
+      let horaInicio = params.hora_inicio;
+
+      if (alumnoId === undefined || horaInicio === undefined) {
+        const inscripcion = await tx.inscripciones.findUnique({
+          where: { id: inscripcion_id },
+          select: { alumno_id: true, horarios_clases: { select: { hora_inicio: true } } },
+        });
+        if (alumnoId === undefined) alumnoId = inscripcion?.alumno_id ?? null;
+        if (horaInicio === undefined) horaInicio = inscripcion?.horarios_clases?.hora_inicio ?? null;
+      }
+
+      if (alumnoId) {
+        const indiceRecuperaciones = await cargarSlotsRecuperacion(tx, alumnoId);
+        lanzarSiHayChoques(
+          detectarChoquesCiclo({ fechas: fechasClases, horaInicio, indiceRecuperaciones }),
+          inscripcion_id
+        );
+      }
+    }
+
+    // 🔍 `dryRun`: solo validar (ver `validarChoquesCiclo`). No inserta.
+    if (params.dryRun) return fechasClases.length;
 
     const datosAsistencia = fechasClases.map((fecha) => ({
       inscripcion_id: inscripcion_id,
@@ -719,5 +1064,78 @@ export const asistenciaService = {
         skipDuplicates: true,
       });
     }
+
+    // 🚩 Antes devolvía undefined. El único llamador (pagos.service.js) ignora
+    // el retorno, así que devolver el conteo es retrocompatible y permite que
+    // generarClasesFuturas delegue acá y siga devolviendo un número.
+    return datosAsistencia.length;
+  },
+
+  /**
+   * 🤝 BL-010: previsualiza los choques con recuperaciones ANTES de generar.
+   *
+   * Es la "alerta limpia que el frontend puede manejar" del ticket, resuelta en
+   * un endpoint NUEVO y de solo lectura. No se añadió al response de
+   * `validarPago` por la regla de oro (no se tocan las llaves de los JSON
+   * existentes), y no devuelve 409 porque esto es una consulta previa, no un
+   * conflicto: el admin la usa para decidir antes de aprobar el pago.
+   *
+   * Reusa EXACTAMENTE la misma aritmética que la generación real
+   * (`calcularProximasFechas` + `detectarChoquesCiclo`), así que lo que
+   * muestra es por construcción lo que va a pasar.
+   */
+  previsualizarChoquesRecuperacion: async ({ inscripcion_id, fecha_inicio }) => {
+    // ⚠️ Fuera de cualquier $transaction: un formato inválido debe dar 400 sin
+    // haber tocado la BD (ver la cabecera de parsearFechaInicioCiclo).
+    const inicioSolicitado = parsearFechaInicioCiclo(fecha_inicio);
+
+    const inscripcion = await prisma.inscripciones.findUnique({
+      where: { id: Number(inscripcion_id) },
+      select: {
+        id: true,
+        alumno_id: true,
+        tipo_inscripcion: true,
+        fecha_inscripcion: true,
+        horarios_clases: { select: { dia_semana: true, hora_inicio: true } },
+      },
+    });
+
+    if (!inscripcion) {
+      throw new ApiError(`Inscripción ${inscripcion_id} no encontrada.`, 404);
+    }
+
+    const fechaInicioCalculo = inicioSolicitado ?? new Date(inscripcion.fecha_inscripcion);
+
+    // 🚩 BL-001: una INDIVIDUAL vive en su ventana de 7 días, no en el ciclo de 30.
+    const diasVentana = esIndividual(inscripcion) ? DIAS_VENTANA_INDIVIDUAL : DIAS_CICLO;
+    const fechaLimite = new Date(fechaInicioCalculo);
+    fechaLimite.setDate(fechaLimite.getDate() + (diasVentana - 1));
+
+    const fechasPlanificadas = calcularProximasFechas(
+      fechaInicioCalculo,
+      inscripcion.horarios_clases.dia_semana,
+      fechaLimite
+    );
+
+    const indiceRecuperaciones = await cargarSlotsRecuperacion(prisma, inscripcion.alumno_id);
+
+    const choques = detectarChoquesCiclo({
+      fechas: fechasPlanificadas,
+      horaInicio: inscripcion.horarios_clases.hora_inicio,
+      indiceRecuperaciones,
+    });
+
+    return {
+      inscripcion_id: inscripcion.id,
+      alumno_id: inscripcion.alumno_id,
+      hora: formatHoraUTC(inscripcion.horarios_clases.hora_inicio),
+      total_clases_previstas: fechasPlanificadas.length,
+      hay_choques: choques.length > 0,
+      total_choques: choques.length,
+      choques,
+      // Llave conservada (regla de oro): antes listaba fechas sin hueco al
+      // reubicar. Ya no se reubica nada, así que siempre va vacía.
+      omitidas: [],
+    };
   }
 };
