@@ -433,7 +433,7 @@ const validarElegibilidad = async (alumnoId, recuperacionId, fechaProgramada, ho
   }
 
   const fechaLimiteValida = new Date(faltaPendiente.fecha_falta);
-  fechaLimiteValida.setUTCDate(fechaLimiteValida.getUTCDate() + 30);
+  fechaLimiteValida.setUTCDate(fechaLimiteValida.getUTCDate() + 60);
 
   // Traer fecha local y convertirla a string
   const fechaProgramadaTexto = fechaProgramadaDate.toLocaleDateString('en-CA', { timeZone: 'America/Lima' });

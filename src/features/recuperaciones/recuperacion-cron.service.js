@@ -4,7 +4,7 @@ import { logger } from '../../shared/utils/logger.util.js';
 class RecuperacionCronService {
   async ejecutarLimpiezaTickets() {
     const treintaDiasAntes = new Date();
-    treintaDiasAntes.setUTCDate(treintaDiasAntes.getUTCDate() - 30)
+    treintaDiasAntes.setUTCDate(treintaDiasAntes.getUTCDate() - 60)
 
     const ticketsActualizados = await prisma.recuperaciones.updateMany({
       where: {
