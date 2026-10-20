@@ -3,6 +3,7 @@ import { merchController } from './merch.controller.js';
 import { merchSchema } from './merch.schema.js';
 import { authenticate } from '../../shared/middlewares/auth.middleware.js';
 import { authorize } from '../../shared/middlewares/authorize.middleware.js';
+import { subirImagen } from '../../shared/middlewares/upload.middleware.js';
 import {
   validate,
   validateParams,
@@ -10,6 +11,10 @@ import {
 } from '../../shared/middlewares/validate.middleware.js';
 
 const router = Router();
+
+// Foto opcional del producto (campo multipart `imagen`, solo JPG/PNG/WEBP verificados por su
+// contenido). Si la petición es JSON (clientes viejos con Base64) el body pasa intacto.
+const subirImagenMerch = subirImagen('imagen');
 
 router.use(authenticate);
 
@@ -55,6 +60,7 @@ router.delete(
 router.post(
   '/',
   authorize('Administrador'),
+  subirImagenMerch,
   validate(merchSchema.createMerchSchema),
   merchController.crear
 );
@@ -62,8 +68,16 @@ router.put(
   '/:id',
   authorize('Administrador'),
   validateParams(merchSchema.idParamSchema),
+  subirImagenMerch,
   validate(merchSchema.updateMerchSchema),
   merchController.actualizar
+);
+// Elimina el producto y su foto en Cloudinary (409 si ya tiene ventas: se desactiva).
+router.delete(
+  '/:id',
+  authorize('Administrador'),
+  validateParams(merchSchema.idParamSchema),
+  merchController.eliminar
 );
 
 // --- Logística física: preparar, enviar a la sede, avisar y entregar en mano ---

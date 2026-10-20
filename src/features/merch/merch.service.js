@@ -2,6 +2,7 @@ import { prisma } from '../../config/database.config.js';
 import { ApiError } from '../../shared/utils/error.util.js';
 import { aCentimos, aMonto, redondear2 } from '../../shared/utils/dinero.util.js';
 import { sincronizarPuenteDeuda } from '../../shared/utils/deuda-puente.util.js';
+import { cloudinaryService } from '../cloudinaryImg/cloudinary.service.js';
 import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc.js';
 import timezone from 'dayjs/plugin/timezone.js';
@@ -9,6 +10,8 @@ dayjs.extend(utc);
 dayjs.extend(timezone);
 const TZ_LIMA = 'America/Lima';
 import {
+  CONCEPTO_INGRESO,
+  calcularSplitIngresos,
   ESTADOS_PAGADOS,
   ESTADO_ITEM,
   ESTADO_MERCH,
@@ -19,11 +22,22 @@ import {
   armarAvisoListo,
   construirLineas,
   detalleMerch,
+  esSaldoCompleto,
   filasAlumnoMerch,
   filtroBusquedaAlumno,
   normalizarEstadoItem,
   validarTransicionItem,
 } from './logic/merch.logic.js';
+
+const CARPETA_CLOUDINARY_MERCH = 'merch';
+
+// Optimización de las fotos del catálogo: al subir se guarda reducido (máx. 800 px de lado,
+// calidad automática, sin conservar el original de hasta 5 MB) y la URL se sirve con
+// formato y calidad automáticos (WebP/AVIF cuando el navegador lo soporta).
+export const OPTIMIZACION_IMAGEN_MERCH = {
+  transformation: [{ width: 800, height: 800, crop: 'limit', quality: 'auto' }],
+  entrega: 'f_auto,q_auto',
+};
 
 // Estados de un ítem que cuentan como ingreso de merch: ya se cobró (RESERVADO no)
 // y no se reembolsó (DEVUELTO no). El ingreso se reconoce al pagar, no al entregar.
@@ -39,6 +53,30 @@ const ESTADOS_CUENTA_ABIERTA = ['PENDIENTE', 'PARCIAL', 'POR_VALIDAR'];
 export const whereCuentaSoloMerch = {
   alumno_merch: { some: {} },
   inscripciones_deudas_link: { none: {} },
+};
+
+/**
+ * Fila de ingreso en caja ligada a un pago (INGRESO_MERCH / INGRESO_MATRICULA). Idempotente
+ * por (pago_id, concepto): si ya existe devuelve null y no escribe nada.
+ */
+const crearFilaIngreso = async (db, { pago, concepto, monto, usuarioAdminId, tipo, fecha }) => {
+  const existente = await db.movimientos_financieros.findFirst({
+    where: { pago_id: pago.id, concepto },
+    select: { id: true },
+  });
+  if (existente) return null;
+  return db.movimientos_financieros.create({
+    data: {
+      tipo_movimiento: 'INGRESO',
+      monto,
+      concepto,
+      metodo_pago_id: pago.metodo_pago_id ?? null,
+      registrado_por: usuarioAdminId ? Number(usuarioAdminId) : null,
+      pago_id: pago.id,
+      notas: `Pago #${pago.id} · cuenta #${pago.cuenta_id} (${tipo})`,
+      ...(fecha && { fecha_movimiento: fecha }),
+    },
+  });
 };
 
 const enTransaccion = (tx, fn) => (tx ? fn(tx) : prisma.$transaction(fn));
@@ -108,15 +146,99 @@ export const merchService = {
     });
   },
 
-  crear: async (data) => {
-    return prisma.merch.create({ data });
+  /**
+   * `archivo` es el File de multer (campo `imagen`). Se sube a Cloudinary y se guardan
+   * `imagen_url` (secure_url) e `imagen_public_id`. Si el insert falla, el asset recién
+   * subido se borra para no dejar basura en la nube. `db`/`nube` son inyectables para tests.
+   */
+  crear: async (data, archivo = null, { db = prisma, nube = cloudinaryService } = {}) => {
+    const { eliminar_imagen: _ignorado, ...campos } = data;
+    let subida = null;
+    if (archivo) {
+      subida = await nube.upload(archivo, CARPETA_CLOUDINARY_MERCH, OPTIMIZACION_IMAGEN_MERCH);
+      campos.imagen_url = subida.url;
+      campos.imagen_public_id = subida.publicId;
+    } else if (campos.imagen_url) {
+      campos.imagen_public_id = null; // Base64 / URL externa (camino legacy por JSON)
+    }
+
+    try {
+      return await db.merch.create({ data: campos });
+    } catch (error) {
+      if (subida) await nube.destroy(subida.publicId);
+      throw error;
+    }
   },
 
-  actualizar: async (id, data) => {
-    return prisma.merch.update({
+  /**
+   * Cambio de foto (archivo nuevo, `eliminar_imagen` o `imagen_url` por JSON): tras guardar,
+   * el asset anterior de Cloudinary se borra. Si el update falla, se borra el recién subido.
+   */
+  actualizar: async (id, data, archivo = null, { db = prisma, nube = cloudinaryService } = {}) => {
+    const { eliminar_imagen, ...campos } = data;
+
+    const actual = await db.merch.findUnique({
       where: { id: Number(id) },
-      data: { ...data, actualizado_en: new Date() },
+      select: { id: true, imagen_public_id: true },
     });
+    if (!actual) throw new ApiError('El producto de merch no existe.', 404);
+
+    if (Object.keys(campos).length === 0 && !archivo && !eliminar_imagen) {
+      throw new ApiError('Debe proporcionar al menos un campo para actualizar', 400);
+    }
+
+    let subida = null;
+    if (archivo) {
+      subida = await nube.upload(archivo, CARPETA_CLOUDINARY_MERCH, OPTIMIZACION_IMAGEN_MERCH);
+      campos.imagen_url = subida.url;
+      campos.imagen_public_id = subida.publicId;
+    } else if (eliminar_imagen) {
+      campos.imagen_url = null;
+      campos.imagen_public_id = null;
+    } else if (campos.imagen_url !== undefined) {
+      campos.imagen_public_id = null; // JSON legacy: la foto ya no vive en Cloudinary
+    }
+
+    let actualizado;
+    try {
+      actualizado = await db.merch.update({
+        where: { id: Number(id) },
+        data: { ...campos, actualizado_en: new Date() },
+      });
+    } catch (error) {
+      if (subida) await nube.destroy(subida.publicId);
+      throw error;
+    }
+
+    const cambioFoto = campos.imagen_public_id !== undefined;
+    if (cambioFoto && actual.imagen_public_id && actual.imagen_public_id !== campos.imagen_public_id) {
+      await nube.destroy(actual.imagen_public_id);
+    }
+    return actualizado;
+  },
+
+  /**
+   * Borra el producto y su foto de Cloudinary. Con ventas asociadas no se puede borrar
+   * (la colección de los alumnos lo referencia): se desactiva con estado INACTIVO.
+   */
+  eliminar: async (id, { db = prisma, nube = cloudinaryService } = {}) => {
+    const producto = await db.merch.findUnique({
+      where: { id: Number(id) },
+      select: { id: true, nombre: true, imagen_public_id: true },
+    });
+    if (!producto) throw new ApiError('El producto de merch no existe.', 404);
+
+    const ventas = await db.alumno_merch.count({ where: { merch_id: producto.id } });
+    if (ventas > 0) {
+      throw new ApiError(
+        `"${producto.nombre}" ya tiene ${ventas} unidad(es) vendida(s) y no se puede eliminar. Desactívalo (estado INACTIVO) para sacarlo del catálogo.`,
+        409
+      );
+    }
+
+    await db.merch.delete({ where: { id: producto.id } });
+    await nube.destroy(producto.imagen_public_id);
+    return { id: producto.id };
   },
 
   // --------------------------------------------------------------- Colección
@@ -195,6 +317,16 @@ export const merchService = {
           // Pagado pero aún no en la mano del alumno: la logística lo mueve desde acá.
           estado_item: ESTADO_ITEM.POR_ENTREGAR,
         }),
+      });
+
+      // 💹 Nace cobrada y no pasa por validarPago: se deja aquí su INGRESO_MERCH para que el
+      // listado de caja la muestre igual que a las órdenes validadas (todo el pago es merch).
+      await crearFilaIngreso(db, {
+        pago,
+        concepto: CONCEPTO_INGRESO.MERCH,
+        monto: total,
+        usuarioAdminId: adminId,
+        tipo: TIPO_TRANSACCION.MERCH,
       });
 
       await db.notificaciones.create({
@@ -401,6 +533,91 @@ export const merchService = {
       select: { monto_pagado: true },
     });
     return aMonto(items.reduce((acc, i) => acc + aCentimos(i.monto_pagado), 0));
+  },
+
+  /**
+   * Split de ingresos al APROBAR un pago (lo llama validarPago, en su misma transacción).
+   * Deja en `movimientos_financieros` una fila INGRESO_MERCH y otra INGRESO_MATRICULA para
+   * que caja vea la ganancia de merch por separado:
+   *   MERCH -> 1 fila (todo el pago) · MIXTO -> 2 filas · MATRICULA -> ninguna.
+   * Las filas llevan `pago_id`; los reportes que derivan ingresos desde `pagos` las excluyen
+   * para no contar el mismo dinero dos veces. Idempotente por (pago_id, concepto).
+   */
+  registrarSplitIngresos: async (tx, { pago, usuarioAdminId, esPagoCompleto }) => {
+    const tipo = await merchService.tipoTransaccionDeCuenta(tx, pago.cuenta_id);
+    if (tipo === TIPO_TRANSACCION.MATRICULA) return [];
+
+    const cuenta = await tx.cuentas_por_cobrar.findUnique({
+      where: { id: Number(pago.cuenta_id) },
+      select: { monto_final: true },
+    });
+    const merchTotal = await merchService.sumarMerchDeCuenta(tx, pago.cuenta_id);
+
+    // Lo que merch ya recibió en los abonos anteriores de esta misma cuenta.
+    const pagosCuenta = await tx.pagos.findMany({
+      where: { cuenta_id: Number(pago.cuenta_id) },
+      select: { id: true },
+    });
+    const previos = await tx.movimientos_financieros.findMany({
+      where: {
+        concepto: CONCEPTO_INGRESO.MERCH,
+        pago_id: { in: pagosCuenta.map((p) => p.id).filter((id) => id !== pago.id) },
+      },
+      select: { monto: true },
+    });
+    const merchYaRegistrado = aMonto(previos.reduce((acc, m) => acc + aCentimos(m.monto), 0));
+
+    // validarPago ya calculó esto (calcularSaldosAlcancía) y lo pasa tal cual. Si no viene,
+    // se recalcula con la MISMA regla: saldo restante <= 1 céntimo.
+    let completo = esPagoCompleto;
+    if (completo === undefined) {
+      const saldos = await tx.pagos.aggregate({
+        _sum: { monto_pagado: true },
+        where: { cuenta_id: Number(pago.cuenta_id), estado_validacion: 'APROBADO' },
+      });
+      completo = esSaldoCompleto(cuenta?.monto_final ?? 0, saldos._sum.monto_pagado ?? 0);
+    }
+
+    return merchService.escribirSplitIngresos(tx, {
+      pago,
+      tipo,
+      montoCuenta: cuenta?.monto_final ?? 0,
+      merchTotal,
+      merchYaRegistrado,
+      esPagoCompleto: completo,
+      usuarioAdminId,
+    });
+  },
+
+  /**
+   * Calcula el reparto merch/matrícula de UN pago y escribe sus filas (las que tengan monto).
+   * Es el único punto que escribe el split: lo usan validarPago (en vivo) y la regularización
+   * histórica, así ambos reparten exactamente igual. `fecha` solo la pasa el histórico para
+   * que la fila caiga en el mes en que se cobró el pago. Devuelve solo las filas nuevas.
+   */
+  escribirSplitIngresos: async (
+    db,
+    { pago, tipo, montoCuenta, merchTotal, merchYaRegistrado, esPagoCompleto, usuarioAdminId, fecha }
+  ) => {
+    const { merch, matricula } = calcularSplitIngresos({
+      montoPago: pago.monto_pagado,
+      montoCuenta,
+      merchTotal,
+      merchYaRegistrado,
+      esPagoCompleto,
+    });
+
+    const filas = [
+      { concepto: CONCEPTO_INGRESO.MERCH, monto: merch },
+      { concepto: CONCEPTO_INGRESO.MATRICULA, monto: matricula },
+    ].filter((f) => f.monto > 0);
+
+    const creadas = [];
+    for (const { concepto, monto } of filas) {
+      const fila = await crearFilaIngreso(db, { pago, concepto, monto, usuarioAdminId, tipo, fecha });
+      if (fila) creadas.push(fila);
+    }
+    return creadas;
   },
 
   /** true si la cuenta es una orden de merch sin matrícula (no toca inscripciones). */

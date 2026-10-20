@@ -71,6 +71,49 @@ export function validarTransicionItem(actual, nuevo) {
 
 export const TIPO_TRANSACCION = { MATRICULA: 'MATRICULA', MERCH: 'MERCH', MIXTO: 'MIXTO' };
 
+/** Conceptos de las filas de `movimientos_financieros` que genera la aprobación de un pago. */
+export const CONCEPTO_INGRESO = { MERCH: 'INGRESO_MERCH', MATRICULA: 'INGRESO_MATRICULA' };
+
+/**
+ * Misma regla que `calcularSaldosAlcancía` (pagos.logic.js): la deuda queda saldada cuando el
+ * saldo restante es <= 1 céntimo. `totalPagado` incluye el pago que se está procesando.
+ */
+export const esSaldoCompleto = (montoCuenta, totalPagado) =>
+  Math.max(0, Number(montoCuenta) - Number(totalPagado)) <= 0.01;
+
+/**
+ * Reparte un pago aprobado entre la parte de merch y la de matrícula.
+ *
+ * La parte de merch es proporcional al peso del merch en la cuenta. Un abono parcial
+ * lleva su proporción; el pago que COMPLETA la deuda lleva el remanente exacto
+ * (`merchTotal - merchYaRegistrado`), así la suma de todos los pagos de la cuenta
+ * cierra en `merchTotal` sin arrastrar céntimos de redondeo. Todo en céntimos enteros.
+ *
+ * @returns {{ merch: number, matricula: number }} montos de 2 decimales; merch + matricula = montoPago.
+ */
+export function calcularSplitIngresos({
+  montoPago,
+  montoCuenta,
+  merchTotal,
+  merchYaRegistrado = 0,
+  esPagoCompleto = false,
+}) {
+  const pago = aCentimos(montoPago);
+  const cuenta = aCentimos(montoCuenta);
+  const totalMerch = aCentimos(merchTotal);
+  const yaRegistrado = aCentimos(merchYaRegistrado);
+
+  if (pago <= 0 || totalMerch <= 0 || cuenta <= 0) {
+    return { merch: 0, matricula: aMonto(Math.max(pago, 0)) };
+  }
+
+  const remanente = Math.max(totalMerch - yaRegistrado, 0);
+  const proporcional = Math.round((pago * Math.min(totalMerch, cuenta)) / cuenta);
+  const merchCentimos = Math.min(esPagoCompleto ? remanente : proporcional, remanente, pago);
+
+  return { merch: aMonto(merchCentimos), matricula: aMonto(pago - merchCentimos) };
+}
+
 /**
  * Normaliza `merch_ids` (ids repetidos = unidades) a [{ merch_id, cantidad }].
  * Conserva el orden de primera aparición para que el detalle sea reproducible.
