@@ -34,7 +34,7 @@ export const DIAS_CICLO = 30;
 // semana garantiza exactamente 5 clases por ciclo. DIAS_CICLO (30) es solo el
 // cierre administrativo que aplica el VERDUGO; un cambio de horario genera por
 // conteo contra esta constante (ver cambio-horario.util.js).
-export const CLASES_POR_CICLO = 5;
+export const CLASES_POR_CICLO = 4;
 
 // 🎯 BL-001: una inscripción INDIVIDUAL es una clase suelta, no un ciclo.
 // Su "ciclo" dura el día de la clase, así que el cron de individuales cierra
