@@ -32,7 +32,7 @@ export const DIAS_VENTANA_INDIVIDUAL = 7;
  * Función auxiliar para calcular fechas DENTRO DE UN RANGO (Dinámico) 📅
  * Garantiza que la primera clase sea IGUAL o POSTERIOR a la fecha de inicio.
  */
-export const calcularProximasFechas = (fechaInicio, diaSemanaClase, fechaLimite) => {
+export const calcularProximasFechas = (fechaInicio, diaSemanaClase, esIndividual = false) => {
   const fechas = [];
   const fechaActual = new Date(fechaInicio);
   const diaSemanaNormalizado = diaSemanaClase === 7 ? 0 : Number(diaSemanaClase);
@@ -44,21 +44,16 @@ export const calcularProximasFechas = (fechaInicio, diaSemanaClase, fechaLimite)
   // 🔥 CORRECCIÓN DE ZONA HORARIA (Mediodía para evitar saltos de día)
   fechaActual.setHours(12, 0, 0, 0);
 
-  const limiteFijo = new Date(fechaLimite);
-  limiteFijo.setHours(12, 0, 0, 0);
-
-  // 1. Buscamos el primer día de clase válido que sea >= fechaInicio
+  // Buscamos el primer día de clase válido que sea >= fechaInicio
   // Si la fechaInicio ya coincide con diaSemanaClase, se queda ahí.
   const diasHastaPrimeraClase = (diaSemanaNormalizado - fechaActual.getDay() + 7) % 7;
   fechaActual.setDate(fechaActual.getDate() + diasHastaPrimeraClase);
 
-  // 2. Generamos fechas MIENTRAS no superemos el límite de los 30 días
-  // Importante: Si la primera fecha encontrada ya se pasó del límite, no agrega nada.
-  while (fechaActual <= limiteFijo) {
+  const limite = esIndividual ? 1 : 4;
+  while (fechas.length < limite) {
     fechas.push(new Date(fechaActual));
     fechaActual.setDate(fechaActual.getDate() + 7);
   }
-
   return fechas;
 };
 
@@ -79,10 +74,7 @@ export const calcularPrimeraFechaClase = (fechaInicio, diaSemanaClase) => {
   const inicio = new Date(fechaInicio);
   if (Number.isNaN(inicio.getTime())) return null;
 
-  const limite = new Date(inicio);
-  limite.setDate(limite.getDate() + (DIAS_VENTANA_INDIVIDUAL - 1));
-
-  return calcularProximasFechas(inicio, diaSemanaClase, limite)[0] ?? null;
+  return calcularProximasFechas(inicio, diaSemanaClase, true)[0] ?? null;
 };
 
 // Tope de semanas que se recorren buscando fechas libres de feriado. Un año

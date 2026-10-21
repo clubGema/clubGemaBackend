@@ -15,7 +15,7 @@ import {
 } from '../../shared/utils/clase-fecha.util.js';
 import { separarClasesParaCambio } from '../../shared/utils/cambio-horario.util.js';
 // 🔧 BL-001: el 30 estaba hardcodeado acá como cuarta copia de la constante.
-import { DIAS_CICLO, parsearFechaInicioCiclo } from '../../shared/utils/ciclo.util.js';
+import { parsearFechaInicioCiclo } from '../../shared/utils/ciclo.util.js';
 import { ApiError } from '../../shared/utils/error.util.js';
 import { esIndividual } from '../../shared/utils/tipo-inscripcion.util.js';
 import {
@@ -120,9 +120,9 @@ export const asistenciaService = {
     // 🛡️ BL-001: GUARDIA DE TIPO (REGULAR vs INDIVIDUAL)
     //
     // Una inscripción INDIVIDUAL es una clase suelta: nunca debe recibir el
-    // ciclo de 30 días. Esa bifurcación ya la hacía pagos.service.js, pero era
+    // ciclo regular. Esa bifurcación ya la hacía pagos.service.js, pero era
     // el ÚNICO sitio del backend que la hacía — updateInscripcion (cambio de
-    // horario) llamaba acá directo y le generaba 30 clases a una clase suelta.
+    // horario) llamaba acá directo y le generaba clases regulares a una clase suelta.
     // Esta guardia blinda a cualquier llamador, presente o futuro.
     //
     // `tipo_inscripcion` se puede pasar por params para ahorrar la consulta
@@ -153,7 +153,7 @@ export const asistenciaService = {
 
     if (esIndividual(tipo)) {
       console.log(
-        `🎟️ Inscripción ${inscripcion_id} es INDIVIDUAL: se genera 1 clase suelta, no un ciclo de ${DIAS_CICLO} días.`
+        `🎟️ Inscripción ${inscripcion_id} es INDIVIDUAL: se genera 1 clase suelta, no un ciclo regular.`
       );
       return await asistenciaService.generarClaseUnica(tx, {
         inscripcion_id,
@@ -174,19 +174,17 @@ export const asistenciaService = {
     let fechaInicioCalculo;
 
     if (fecha_inicio) {
-      // 🌟 REGLA DE ORO: Si el pago ya definió cuándo empieza el ciclo (ej. 05/03), mandamos esa.
       fechaInicioCalculo = new Date(fecha_inicio);
       console.log(
         `🚀 Generando clases desde FECHA PROGRAMADA: ${fechaInicioCalculo.toLocaleDateString()}`
       );
     } else {
-      // 🔄 FALLBACK: Lógica de empalme automática si se llama sin fecha_inicio
       const ultimaClase = await tx.registros_asistencia.findFirst({
         where: { inscripcion_id: inscripcion_id },
         orderBy: { fecha: 'desc' },
       });
 
-      fechaInicioCalculo = new Date(); // Por defecto: HOY
+      fechaInicioCalculo = new Date();
 
       if (ultimaClase) {
         const fechaUltima = new Date(ultimaClase.fecha);
@@ -200,19 +198,13 @@ export const asistenciaService = {
       }
     }
 
-    // =================================================================
-    // 🧠 LÓGICA DE CÁLCULO DE LÍMITE (El "Hasta Cuándo")
-    // =================================================================
-    const fechaLimite = new Date(fechaInicioCalculo);
-    fechaLimite.setDate(fechaLimite.getDate() + (DIAS_CICLO - 1));
-
     // 2. Calculamos las fechas reales de clase dentro de este ciclo
-    const fechasPlanificadas = calcularProximasFechas(fechaInicioCalculo, dia_semana, fechaLimite);
+    const fechasPlanificadas = calcularProximasFechas(fechaInicioCalculo, dia_semana);
 
     // =================================================================
     // 🤝 BL-010: si alguna fecha del ciclo coincide con una recuperación
     // PROGRAMADA del alumno, se aborta con 409 ANTES de insertar nada. Una sola
-    // consulta para las ~5 fechas del ciclo.
+    // consulta para las fechas del ciclo.
     // =================================================================
     const indiceRecuperaciones = alumnoId ? await cargarSlotsRecuperacion(tx, alumnoId) : null;
 
@@ -230,7 +222,7 @@ export const asistenciaService = {
       fecha: fecha,
       estado: 'PROGRAMADA',
       registrado_por: coordinador_id,
-      comentario: `Generado auto (Ciclo 30 días) - Admin ID: ${usuario_admin_id}`,
+      comentario: `Generado auto (Ciclo Regular) - Admin ID: ${usuario_admin_id}`,
     }));
 
     // 4. Insertamos usando skipDuplicates para blindar la base de datos
@@ -242,7 +234,7 @@ export const asistenciaService = {
     }
 
     console.log(
-      `✅ Ciclo generado: ${datosAsistencia.length} clases para ID ${inscripcion_id} (Hasta: ${fechaLimite.toLocaleDateString()})`
+      `✅ Ciclo generado: ${datosAsistencia.length} clases para ID ${inscripcion_id})`
     );
 
     return datosAsistencia.length;
@@ -985,10 +977,7 @@ export const asistenciaService = {
     // un Invalid Date silencioso).
     const fechaInicioCalculo = fecha_inicio ? new Date(fecha_inicio) : new Date();
 
-    const fechaLimite = new Date(fechaInicioCalculo);
-    fechaLimite.setDate(fechaLimite.getDate() + (DIAS_VENTANA_INDIVIDUAL - 1));
-
-    let fechasClases = calcularProximasFechas(fechaInicioCalculo, dia_semana, fechaLimite);
+    let fechasClases = calcularProximasFechas(fechaInicioCalculo, dia_semana, true);
 
     // 🎉 BL-003: si la fecha cayó en feriado, la corremos +7 días (misma
     // ocurrencia semanal) hasta MAX_SALTOS_POR_FERIADO intentos. Si no hay
@@ -1106,15 +1095,12 @@ export const asistenciaService = {
 
     const fechaInicioCalculo = inicioSolicitado ?? new Date(inscripcion.fecha_inscripcion);
 
-    // 🚩 BL-001: una INDIVIDUAL vive en su ventana de 7 días, no en el ciclo de 30.
-    const diasVentana = esIndividual(inscripcion) ? DIAS_VENTANA_INDIVIDUAL : DIAS_CICLO;
-    const fechaLimite = new Date(fechaInicioCalculo);
-    fechaLimite.setDate(fechaLimite.getDate() + (diasVentana - 1));
+    const esInscIndividual = esIndividual(inscripcion) ? true : false;
 
     const fechasPlanificadas = calcularProximasFechas(
       fechaInicioCalculo,
       inscripcion.horarios_clases.dia_semana,
-      fechaLimite
+      esInscIndividual
     );
 
     const indiceRecuperaciones = await cargarSlotsRecuperacion(prisma, inscripcion.alumno_id);
