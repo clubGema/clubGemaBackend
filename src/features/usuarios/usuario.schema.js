@@ -4,7 +4,8 @@ import { VALID_ROLES_ARRAY, ROLE_REQUIRED_FIELDS } from '../roles/roles.constant
 import { rolesSpecificSchemas } from './schemas/roles.schema.js';
 import { commonUsuarioSchemas } from './schemas/common.schema.js';
 
-const emptyToUndefined = (schema) => z.preprocess((val) => (val === '' ? undefined : val), schema);
+const emptyToUndefined = (schema) =>
+  z.preprocess((val) => (val === '' || val === null ? undefined : val), schema);
 
 const baseUserSchema = z.object({
   username: z
@@ -16,22 +17,20 @@ const baseUserSchema = z.object({
     .regex(/^[a-z0-9._]+$/, 'Solo letras, números, puntos y guiones bajos')
     .optional(),
   email: z
-    .string()
+    .string({ required_error: 'El correo electrónico es requerido' })
     .trim()
     .toLowerCase()
-    .email('Email inválido')
-    .nullable()
-    .optional()
-    .or(z.literal('')),
+    .email('Email inválido'),
   password: userCommonValidation.passwordSchema,
   nombres: userCommonValidation.nameSchema,
   apellidos: userCommonValidation.nameSchema,
-  tipo_documento_id: userCommonValidation.stringIdSchema.optional(),
-  numero_documento: z
-    .string()
-    .min(5, 'El número de documento debe tener al menos 5 caracteres')
-    .max(20, 'El número de documento debe tener menos de 15 caracteres')
-    .optional(),
+  tipo_documento_id: emptyToUndefined(userCommonValidation.stringIdSchema).optional().nullable(),
+  numero_documento: emptyToUndefined(
+    z
+      .string()
+      .min(5, 'El número de documento debe tener al menos 5 caracteres')
+      .max(20, 'El número de documento debe tener menos de 15 caracteres')
+  ).optional().nullable(),
   rol_id: z
     .union([
       z.enum(VALID_ROLES_ARRAY, {
@@ -42,13 +41,16 @@ const baseUserSchema = z.object({
       z.number().int().positive('El ID del rol debe ser un número positivo'),
     ])
     .default('alumno'),
-  telefono_personal: userCommonValidation.phoneSchema,
-  fecha_nacimiento: userCommonValidation.dateSchema,
-  genero: z
-    .enum(['M', 'F', 'O'], {
-      errorMap: () => ({ message: 'Género debe ser M (Masculino), F (Femenino) u O (Otro)' }),
-    })
-    .optional(),
+  telefono_personal: z
+    .string({ required_error: 'El celular es requerido' })
+    .regex(/^\+?[0-9]{7,15}$/, 'Formato de teléfono inválido'),
+  fecha_nacimiento: emptyToUndefined(userCommonValidation.dateSchema).optional().nullable(),
+  genero: emptyToUndefined(
+    z
+      .enum(['M', 'F', 'O'], {
+        errorMap: () => ({ message: 'Género debe ser M (Masculino), F (Femenino) u O (Otro)' }),
+      })
+  ).optional().nullable(),
 });
 
 export const usuarioSchema = {
@@ -114,7 +116,14 @@ export const usuarioSchema = {
   updateUserSchema: z
     .object({
       username: z.string().trim().toLowerCase().min(3).max(50).optional(),
+      nombres: emptyToUndefined(userCommonValidation.nameSchema).optional(),
+      apellidos: emptyToUndefined(userCommonValidation.nameSchema).optional(),
       email: z.string().trim().toLowerCase().email().nullable().optional(),
+      telefono_personal: emptyToUndefined(userCommonValidation.phoneSchema).optional(),
+      tipo_documento_id: emptyToUndefined(userCommonValidation.stringIdSchema).optional().nullable(),
+      numero_documento: emptyToUndefined(z.string().min(5).max(20)).optional().nullable(),
+      fecha_nacimiento: emptyToUndefined(userCommonValidation.dateSchema).optional().nullable(),
+      genero: emptyToUndefined(z.enum(['M', 'F', 'O'])).optional().nullable(),
       password: emptyToUndefined(userCommonValidation.passwordSchema).optional(),
       direccion_completa: emptyToUndefined(z.string().trim().min(3).max(255)).optional(),
       distrito: emptyToUndefined(z.string().trim().min(1).max(100)).optional(),

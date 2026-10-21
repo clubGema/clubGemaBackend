@@ -254,6 +254,14 @@ export const usuarioService = {
 
     const {
       password,
+      nombres,
+      apellidos,
+      email,
+      telefono_personal,
+      tipo_documento_id,
+      numero_documento,
+      fecha_nacimiento,
+      genero,
       direccion_completa,
       distrito,
       ciudad,
@@ -286,6 +294,23 @@ export const usuarioService = {
     return await prisma.$transaction(async (tx) => {
       if (password) {
         await registroLogic.crearCredenciales(tx, usuarioId, null, password);
+      }
+
+      const usuarioUpdates = {};
+      if (nombres !== undefined) usuarioUpdates.nombres = nombres;
+      if (apellidos !== undefined) usuarioUpdates.apellidos = apellidos;
+      if (email !== undefined) usuarioUpdates.email = email;
+      if (telefono_personal !== undefined) usuarioUpdates.telefono_personal = telefono_personal;
+      if (tipo_documento_id !== undefined) usuarioUpdates.tipo_documento_id = tipo_documento_id;
+      if (numero_documento !== undefined) usuarioUpdates.numero_documento = numero_documento;
+      if (fecha_nacimiento !== undefined) usuarioUpdates.fecha_nacimiento = fecha_nacimiento ? new Date(fecha_nacimiento) : null;
+      if (genero !== undefined) usuarioUpdates.genero = genero;
+
+      if (Object.keys(usuarioUpdates).length > 0) {
+        await tx.usuarios.update({
+          where: { id: usuarioId },
+          data: usuarioUpdates,
+        });
       }
 
       if (Object.keys(alumnoUpdates).length > 0) {

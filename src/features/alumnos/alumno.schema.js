@@ -4,6 +4,20 @@ const GRUPOS_SANGUINEOS = ['O+', 'O-', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-'];
 
 export const actualizarPerfilSchema = z
   .object({
+    nombres: z
+      .string()
+      .min(2, 'Debe tener al menos 2 caracteres')
+      .max(100, 'Máximo 100 caracteres')
+      .regex(/^[a-zA-ZáéíóúÁÉÍÓÚñÑ\s]+$/, 'Solo se permiten letras y espacios')
+      .optional(),
+
+    apellidos: z
+      .string()
+      .min(2, 'Debe tener al menos 2 caracteres')
+      .max(100, 'Máximo 100 caracteres')
+      .regex(/^[a-zA-ZáéíóúÁÉÍÓÚñÑ\s]+$/, 'Solo se permiten letras y espacios')
+      .optional(),
+
     email: z.string().email('Email inválido').optional(),
 
     telefono_personal: z
@@ -17,8 +31,8 @@ export const actualizarPerfilSchema = z
       .transform((val) => new Date(val))
       .optional(),
     genero: z
-      .enum(['M', 'F'], {
-        errorMap: () => ({ message: 'El género debe ser M o F' }),
+      .enum(['M', 'F', 'O'], {
+        errorMap: () => ({ message: 'El género debe ser M, F u O' }),
       })
       .optional(),
 
