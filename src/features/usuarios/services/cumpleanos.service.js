@@ -23,19 +23,31 @@ const chunkArray = (array, size) => {
 
 class CumpleanosService {
   async ejecutarSaludosCumpleanos() {
-    // 1. Obtener el día y mes exactamente con la hora de Lima
+    // 1. Obtener la fecha exactamente con la hora de Lima (America/Lima)
     const hoyLima = dayjs().tz(TZ_LIMA);
-    const mesActual = hoyLima.month() + 1; // En dayjs los meses van de 0 a 11
-    const diaActual = hoyLima.date();
+    const mmDdHoy = hoyLima.format('MM-DD'); // 'MM-DD', ej: '01-25'
+    const anio = hoyLima.year();
+    const esBisiesto = (anio % 4 === 0 && anio % 100 !== 0) || (anio % 400 === 0);
+    const incluirBisiesto = mmDdHoy === '02-28' && !esBisiesto;
 
-    // 2. Consulta en crudo (SQL) que es súper rápida para extraer partes de una fecha
-    const cumpleaneros = await prisma.$queryRaw`
-      SELECT id, nombres, apellidos, telefono_personal, email 
-      FROM usuarios 
-      WHERE activo = true 
-        AND EXTRACT(MONTH FROM fecha_nacimiento) = ${mesActual} 
-        AND EXTRACT(DAY FROM fecha_nacimiento) = ${diaActual}
-    `;
+    // 2. Consulta en crudo (SQL) blindada contra cualquier timezone de Postgres o Railway:
+    // Cast a ::date y TO_CHAR extrae directamente la fecha civil de calendario (MM-DD),
+    // eliminando cualquier desfase de UTC del contenedor o de la sesión de PostgreSQL.
+    const cumpleaneros = incluirBisiesto
+      ? await prisma.$queryRaw`
+          SELECT id, nombres, apellidos, telefono_personal, email 
+          FROM usuarios 
+          WHERE activo = true 
+            AND fecha_nacimiento IS NOT NULL
+            AND TO_CHAR(fecha_nacimiento::date, 'MM-DD') IN ('02-28', '02-29')
+        `
+      : await prisma.$queryRaw`
+          SELECT id, nombres, apellidos, telefono_personal, email 
+          FROM usuarios 
+          WHERE activo = true 
+            AND fecha_nacimiento IS NOT NULL
+            AND TO_CHAR(fecha_nacimiento::date, 'MM-DD') = ${mmDdHoy}
+        `;
 
     if (!cumpleaneros || cumpleaneros.length === 0) {
       logger.info('[FESTEJERO] Hoy no hay cumpleaños, a descansar.');

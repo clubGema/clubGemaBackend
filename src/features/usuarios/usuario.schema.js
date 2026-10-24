@@ -44,7 +44,18 @@ const baseUserSchema = z.object({
   telefono_personal: z
     .string({ required_error: 'El celular es requerido' })
     .regex(/^\+?[0-9]{7,15}$/, 'Formato de teléfono inválido'),
-  fecha_nacimiento: emptyToUndefined(userCommonValidation.dateSchema).optional().nullable(),
+  fecha_nacimiento: z.preprocess(
+    (val) => {
+      if (typeof val === 'string' && val.trim() !== '') return val.trim().slice(0, 10);
+      if (val instanceof Date) return val.toISOString().slice(0, 10);
+      return val;
+    },
+    z
+      .string({ required_error: 'La fecha de nacimiento es requerida' })
+      .min(1, 'La fecha de nacimiento es requerida')
+      .regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato de fecha inválido (YYYY-MM-DD)')
+      .transform((val) => new Date(val))
+  ),
   genero: emptyToUndefined(
     z
       .enum(['M', 'F', 'O'], {
