@@ -33,7 +33,6 @@ const ESTADOS_REGENERABLES = ['PROGRAMADA', 'PENDIENTE'];
 const ESTADOS_SIN_ASISTENCIA = ['PROGRAMADA', 'PENDIENTE', 'REPROGRAMADO'];
 
 const MAX_DIAS_BUSQUEDA = 400;
-const DIAS_CICLO_SIN_CLASES = 30;
 
 // ------------------------- Funciones puras -------------------------
 
@@ -233,16 +232,21 @@ export const ajusteFechaService = {
           feriados,
         });
       } else {
-        // Nunca se generaron: generación normal de un ciclo de 30 días.
-        const limite = new Date(`${nueva_fecha}T12:00:00Z`);
-        limite.setUTCDate(limite.getUTCDate() + DIAS_CICLO_SIN_CLASES - 1);
-        const tope = limite.toISOString().slice(0, 10);
+        const totalInscripciones = ctx.inscripciones.length;
+        const valores = {
+          1: 4,
+          2: 8,
+          3: 12,
+          4: 16,
+        }
+        const cantidadClases = valores[totalInscripciones] ?? 0;
+        if (cantidadClases === 0) throw new ApiError(`La cantidad no puede ser 0, revisar el total de inscripciones: ${ctx.inscripciones}`, 400)
         claves = calcularFechasRegeneracion({
           fechaInicio: nueva_fecha,
           diasPermitidos: ctx.diasPermitidos,
-          cantidad: 60,
+          cantidad: cantidadClases,
           feriados,
-        }).filter((c) => c <= tope);
+        });
       }
 
       // 2. Asigna cada fecha a la inscripción cuyo día coincide
