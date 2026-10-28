@@ -20,7 +20,6 @@ import {
   diaLimaAFechaUTC,
   diasEntreUTC,
   etiquetaMes,
-  finCicloEfectivo,
   parsearMesAnio,
   sumarDiasUTC,
   rangoMesUTC,
@@ -32,9 +31,6 @@ import {
   whereTipoInscripcion,
 } from '../../shared/utils/tipo-inscripcion.util.js';
 import { calcularPrimeraFechaClase } from '../../shared/utils/clase-fecha.util.js';
-// 🔢 Cambio de horario por conteo de clases.
-import { diasParaCubrirUltimaClase } from '../../shared/utils/cambio-horario.util.js';
-import { aplicarCorrimientoDeCiclo } from '../../shared/utils/reprogramacion-ciclo.util.js';
 import { claveDiaDesdeFecha, claveDiaLima } from '../../shared/utils/feriado.util.js';
 // 💰 BL-002: reparto de dinero en céntimos exactos y sincronización del puente.
 import { repartirMonto, redondear2 } from '../../shared/utils/dinero.util.js';
@@ -157,13 +153,16 @@ export const inscripcionService = {
         // de 400.00. repartirMonto asigna el céntimo de residuo al primer slot.
         const partesPorSlot = repartirMonto(totalCobrar, inscripcionesCreadas.length);
 
+        const ids = inscripcionesCreadas.map(i => i.id);
+        const ultimaFecha = await fechaUltimaClase(ids);
+
         await tx.inscripciones_deudas_link.createMany({
           data: inscripcionesCreadas.map((ins, i) => ({
             inscripcion_id: ins.id,
             cuenta_id: nuevaCuenta.id,
             monto_asignado: partesPorSlot[i],
-            fecha_inicio_ciclo: inicioReal,   // 🚩 NUEVO
-            fecha_fin_ciclo: null             // 🚩 NUEVO
+            fecha_inicio_ciclo: inicioReal,
+            fecha_fin_ciclo: ultimaFecha
           }))
         });
 
@@ -246,209 +245,6 @@ export const inscripcionService = {
       console.error(`❌ [FALLO MOTOR RADICAL] Alumno: ${alumno_id} | ${error.message}`);
       throw error;
     }
-  },
-
-  // =================================================================
-  // 🔮 LA LÓGICA DEL PROFETA: Renovaciones Masivas (Reconstruido)
-  // =================================================================
-  generarRenovacionesMasivas: async (diasAnticipacion) => {
-    const { inicio, fin } = Utils.calcularRangoRenovacion(diasAnticipacion);
-
-    return await prisma.$transaction(async (tx) => {
-      // 🚩 BL-001: una INDIVIDUAL no se renueva. Antes entraba al barrido por
-      // filtrar solo por estado, y se le generaba deuda de renovación mensual.
-      const candidatos = await tx.inscripciones.findMany({
-        where: {
-          estado: 'ACTIVO',
-          fecha_inscripcion: { gte: inicio, lte: fin },
-          ...whereTipoInscripcion(TIPO_INSCRIPCION.REGULAR),
-        },
-        distinct: ['alumno_id'],
-      });
-
-      let renovacionesCreadas = 0;
-
-      for (const candidato of candidatos) {
-        const alumnoId = candidato.alumno_id;
-
-        // 🛡️ Evitar duplicados si ya se generó renovación hoy
-        if (await Validators.existeRenovacionReciente(tx, alumnoId, inicio)) continue;
-
-        // 1. Contamos cuántas clases reales tiene el alumno activas
-        // 🚩 BL-001: excluir INDIVIDUALes acá es CRÍTICO para el cobro. Sin
-        // esto, un alumno con 2 horarios regulares + 1 clase suelta activa
-        // buscaba el plan de cantidad_clases_semanal: 3 y se le cobraba de más.
-        // 💰 BL-002: antes era un `count`. Ahora traemos las filas porque hacen
-        // falta los ids (y el ciclo abierto de cada una) para crear los links
-        // del puente, que esta función no creaba en absoluto.
-        const inscripcionesActivas = await tx.inscripciones.findMany({
-          where: {
-            alumno_id: alumnoId,
-            estado: 'ACTIVO',
-            ...whereTipoInscripcion(TIPO_INSCRIPCION.REGULAR),
-          },
-          select: {
-            id: true,
-            inscripciones_deudas_link: {
-              where: { fecha_fin_ciclo: null },
-              select: { id: true, fecha_inicio_ciclo: true },
-              orderBy: { id: 'desc' },
-              take: 1,
-            },
-          },
-          orderBy: { id: 'asc' },
-        });
-
-        const totalCursosActivos = inscripcionesActivas.length;
-
-        if (totalCursosActivos === 0) continue;
-
-        // 🕵️‍♂️ Detective de Régimen (Legacy vs 2026)
-        const esAlumnoLegacy = await Logic.detectarRegimenAlumno(tx, alumnoId);
-
-        // 2. 🌟 BÚSQUEDA DINÁMICA: Buscamos el plan que calce con sus clases actuales
-        const planAdecuado = await tx.catalogo_conceptos.findFirst({
-          where: {
-            cantidad_clases_semanal: totalCursosActivos,
-            activo: true,
-            es_vigente: !esAlumnoLegacy
-          }
-        });
-
-        if (!planAdecuado) {
-          console.log(`⚠️ No hay plan para ${totalCursosActivos} clases para el alumno ${alumnoId}`);
-          continue;
-        }
-
-        // 3. Crear la Deuda Base
-        const nuevaCuenta = await tx.cuentas_por_cobrar.create({
-          data: {
-            alumno_id: alumnoId,
-            concepto_id: planAdecuado.id,
-            // 💰 BL-002: normalizado a 2 decimales, la precisión de la columna.
-            monto_final: redondear2(planAdecuado.precio_base),
-            detalle_adicional: `Renovación Automática (Plan: ${planAdecuado.nombre})`,
-            fecha_vencimiento: Utils.calcularFechaVencimiento(diasAnticipacion),
-            estado: 'PENDIENTE',
-          },
-        });
-
-        // 4. ⚡ APLICACIÓN DE BENEFICIOS PENDIENTES (Lógica recuperada)
-        const beneficiosEnCola = await tx.beneficios_pendientes.findMany({
-          where: { alumno_id: alumnoId, usado: false },
-          include: { tipos_beneficio: true }
-        });
-
-        let montoCorriente = parseFloat(nuevaCuenta.monto_final);
-
-        for (const pendiente of beneficiosEnCola) {
-          const valorNominal = parseFloat(pendiente.tipos_beneficio.valor_por_defecto);
-
-          let descuentoReal = pendiente.tipos_beneficio.es_porcentaje
-            ? montoCorriente * (valorNominal / 100)
-            : valorNominal;
-
-          // 💰 BL-002: a céntimos antes de restar (ver inscribirPaquete).
-          const descuentoFinal = redondear2(
-            descuentoReal > montoCorriente ? montoCorriente : descuentoReal
-          );
-          montoCorriente = redondear2(montoCorriente - descuentoFinal);
-
-          // A. Registrar el descuento aplicado
-          await tx.descuentos_aplicados.create({
-            data: {
-              cuenta_id: nuevaCuenta.id,
-              tipo_beneficio_id: pendiente.tipo_beneficio_id,
-              monto_nominal_aplicado: valorNominal,
-              monto_dinero_descontado: descuentoFinal,
-              motivo_detalle: pendiente.motivo || "Beneficio aplicado en renovación automática",
-              aplicado_por: pendiente.asignado_por,
-              fecha_aplicacion: new Date()
-            }
-          });
-
-          // B. Quemar el beneficio
-          await tx.beneficios_pendientes.update({
-            where: { id: pendiente.id },
-            data: { usado: true }
-          });
-        }
-
-        // 5. Actualizar saldo final de la cuenta si hubo descuentos
-        if (montoCorriente !== parseFloat(nuevaCuenta.monto_final)) {
-          await tx.cuentas_por_cobrar.update({
-            where: { id: nuevaCuenta.id },
-            data: {
-              monto_final: montoCorriente,
-              estado: montoCorriente <= 0.01 ? 'PAGADA' : 'PENDIENTE'
-            }
-          });
-        }
-
-        // =================================================================
-        // 🌉 BL-002 (FIX CENTRAL del foco #3): crear el puente.
-        //
-        // Esta función creaba la cuentas_por_cobrar y NUNCA un
-        // inscripciones_deudas_link. La deuda nacía huérfana: sin
-        // monto_asignado, invisible para el historial de ciclos (filaCiclo) y
-        // para todo lo que busca los links por cuenta_id.
-        //
-        // ⚠️ VIGENCIA: esta renovación se genera con ANTICIPACIÓN (el ciclo
-        // actual sigue corriendo unos días más), así que NO se corta el ciclo
-        // viejo "el día antes" como hace generarRenovacionPaquete —eso le
-        // robaría días al alumno—. Se le estampa su fin NATURAL
-        // (finCicloEfectivo = inicio + 30d, una fecha futura) y el ciclo nuevo
-        // arranca al día siguiente. Así queda exactamente UN link con
-        // fecha_fin_ciclo = null por inscripción, que es el invariante del que
-        // dependen el VERDUGO, es_vigente de filaCiclo y la renovación.
-        // =================================================================
-        const partesRenovacion = repartirMonto(montoCorriente, totalCursosActivos);
-
-        for (let i = 0; i < inscripcionesActivas.length; i++) {
-          const insc = inscripcionesActivas[i];
-          const linkVigente = insc.inscripciones_deudas_link[0] ?? null;
-
-          // Fin natural del ciclo en curso -> el nuevo arranca al día siguiente.
-          const finCicloActual = linkVigente
-            ? finCicloEfectivo(linkVigente.fecha_inicio_ciclo, null)
-            : null;
-
-          if (linkVigente && finCicloActual) {
-            await tx.inscripciones_deudas_link.update({
-              where: { id: linkVigente.id },
-              data: { fecha_fin_ciclo: finCicloActual },
-            });
-          }
-
-          await tx.inscripciones_deudas_link.create({
-            data: {
-              inscripcion_id: insc.id,
-              cuenta_id: nuevaCuenta.id,
-              monto_asignado: partesRenovacion[i],
-              // Sin ciclo previo del que derivar el arranque, el inicio queda
-              // null: filaCiclo ya contempla ese caso (sin_vigencia) y
-              // pagos.service.js lo estampa al validar el pago (BL-006).
-              fecha_inicio_ciclo: finCicloActual ? sumarDiasUTC(finCicloActual, 1) : null,
-              fecha_fin_ciclo: null,
-            },
-          });
-        }
-
-        // 6. 🔔 NOTIFICACIÓN PARA EL DASHBOARD
-        await tx.notificaciones.create({
-          data: {
-            alumno_id: alumnoId,
-            titulo: '💎 Renovación Generada',
-            mensaje: `Se ha generado tu cuota de renovación (S/ ${montoCorriente.toFixed(2)}). Realiza tu pago antes del vencimiento.`,
-            tipo: 'SUCCESS',
-            categoria: 'COBRO'
-          }
-        });
-
-        renovacionesCreadas++;
-      }
-      return renovacionesCreadas;
-    });
   },
 
   getAllInscripciones: async () => {
@@ -595,7 +391,7 @@ export const inscripcionService = {
         throw new Error(`No se puede finalizar una inscripción con estado ${inscripcion.estado}.`);
       }
 
-      const inscripcionActualizada = await tx.inscripciones.update({
+      await tx.inscripciones.update({
         where: { id: Number.parseInt(id) },
         data: {
           estado: 'FINALIZADO',
@@ -603,22 +399,25 @@ export const inscripcionService = {
         }
       });
 
-      // 🚩 NUEVO: cerramos el ciclo de deuda vigente (mismo criterio que el Verdugo).
-      // Sin esto, el link se queda con fecha_fin_ciclo: null para siempre y el
-      // alumno sigue contando como "activo" en dashboards/reportes que miren fechas.
-      //
-      // 🔧 BL-011: antes acá iba `new Date()`. fecha_fin_ciclo es @db.Date y
-      // Postgres trunca al día UTC, así que una finalización hecha entre las
-      // 19:00 y 23:59 de Lima cerraba el ciclo UN DÍA TARDE.
-      await tx.inscripciones_deudas_link.updateMany({
+      const ultimaInscLink = await tx.inscripciones_deudas_link.findFirst({
         where: {
           inscripcion_id: Number.parseInt(id),
-          fecha_fin_ciclo: null
         },
-        data: {
-          fecha_fin_ciclo: diaLimaAFechaUTC()
+        orderBy: {
+          id: 'desc'
         }
       });
+
+      if (ultimaInscLink) {
+        await tx.inscripciones_deudas_link.update({
+          where: {
+            id: ultimaInscLink.id
+          },
+          data: {
+            fecha_fin_ciclo: diaLimaAFechaUTC()
+          }
+        });
+      }
 
       console.log(`✅ [CANCELACIÓN] El alumno ${inscripcion.alumno_id} finalizó voluntariamente el horario ${inscripcion.horario_id}.`);
 
@@ -728,19 +527,25 @@ export const inscripcionService = {
           await CuentasPorCobrarService.eliminar(cuenta.id, true, tx);
         }
       } else {
-        // 🚩 NUEVO: si la inscripción estaba ACTIVA (no POR_VALIDAR), su link de deuda
-        // vigente no se toca en ninguna otra rama de esta función. Lo cerramos aquí
-        // con el mismo criterio del Verdugo, para que no quede "vigente" para siempre.
-        // 🔧 BL-011: día calendario de Lima, no `new Date()` (ver finalizarVoluntaria).
-        await tx.inscripciones_deudas_link.updateMany({
+        const ultimaInscLink = await tx.inscripciones_deudas_link.findFirst({
           where: {
             inscripcion_id: inscripcionId,
-            fecha_fin_ciclo: null
           },
-          data: {
-            fecha_fin_ciclo: diaLimaAFechaUTC()
+          orderBy: {
+            id: 'desc'
           }
         });
+
+        if (ultimaInscLink) {
+          await tx.inscripciones_deudas_link.update({
+            where: {
+              id: ultimaInscLink.id,
+            },
+            data: {
+              fecha_fin_ciclo: diaLimaAFechaUTC()
+            }
+          });
+        }
       }
 
       return {
@@ -850,15 +655,14 @@ export const inscripcionService = {
           const ultimoLinkCerrado = await tx.inscripciones_deudas_link.findFirst({
             where: {
               inscripcion_id: idIns,
-              fecha_fin_ciclo: { not: null }
             },
-            orderBy: { fecha_fin_ciclo: 'desc' }
+            orderBy: { id: 'desc' }
           });
 
           if (ultimoLinkCerrado) {
             await tx.inscripciones_deudas_link.update({
               where: { id: ultimoLinkCerrado.id },
-              data: { fecha_fin_ciclo: null }
+              data: { fecha_fin_ciclo: diaLimaAFechaUTC() }
             });
           }
         }
@@ -1055,10 +859,6 @@ export const inscripcionService = {
           actualizado_en: new Date(),
           creado_en: insc.creado_en,
           id_grupo_transaccion: insc.id_grupo_transaccion,
-          // 🚩 BL-001 (FIX CENTRAL): antes este create NO copiaba el tipo, así
-          // que la nueva inscripción caía al @default('REGULAR') del schema y
-          // una clase suelta se convertía en membresía mensual — y acto seguido
-          // recibía 30 días de clases.
           tipo_inscripcion: insc.tipo_inscripcion,
         },
         include: {
@@ -1066,18 +866,15 @@ export const inscripcionService = {
         }
       })
 
+      const ultimaFecha = await fechaUltimaClase([createdInsc.id]);
+
       const nuevoLink = await tx.inscripciones_deudas_link.create({
         data: {
           inscripcion_id: createdInsc.id,
           cuenta_id: linkAnterior.cuenta_id,
           monto_asignado: Number(linkAnterior.monto_asignado),
-          // 🚩 REGULAR: conserva la vigencia real del ciclo (si estaba abierto
-          // sigue abierto, si estaba cerrado sigue cerrado).
-          // 🚩 BL-001 INDIVIDUAL: el "ciclo" es el día de la clase, y el
-          // horario destino puede moverla, así que se recalcula en vez de
-          // copiarse.
           fecha_inicio_ciclo: esInscripcionIndividual ? fechaClaseDestino : linkAnterior.fecha_inicio_ciclo,
-          fecha_fin_ciclo: esInscripcionIndividual ? fechaClaseDestino : linkAnterior.fecha_fin_ciclo,
+          fecha_fin_ciclo: esInscripcionIndividual ? fechaClaseDestino : ultimaFecha,
         }
       })
 
@@ -1138,55 +935,16 @@ export const inscripcionService = {
           // desde la fecha efectiva, saltando feriados.
           const pendientes = Math.max(0, CLASES_POR_CICLO - planCambio.consumidas);
 
-          const fechasNuevas = await asistenciaService.generarClasesPorConteo(tx, {
+          await asistenciaService.generarClasesPorConteo(tx, {
             inscripcion_id: createdInsc.id,
             dia_semana: createdInsc.horarios_clases.dia_semana,
             usuario_admin_id: Number.parseInt(adminId),
             coordinador_id: createdInsc.horarios_clases.coordinador_id,
             fecha_inicio: dayjs.tz(claveEfectiva, TZ_LIMA).hour(12).toDate(),
             cantidad: pendientes,
-            // 🤝 BL-010: idem.
             alumno_id: createdInsc.alumno_id,
             hora_inicio: createdInsc.horarios_clases.hora_inicio,
           })
-
-          // 🚩 Fin de ciclo SIN escribir fecha_fin_ciclo (invariante BL-006, ver
-          // cambio-horario.util.js): si la última clase pasa del cierre
-          // derivado (+30 días del VERDUGO), se corre el ancla lo justo.
-          const ultimaClase = fechasNuevas[fechasNuevas.length - 1];
-          const dias = ultimaClase
-            ? diasParaCubrirUltimaClase(createdInsc.fecha_inscripcion, ultimaClase)
-            : 0;
-
-          if (dias > 0) {
-            const corrido = await aplicarCorrimientoDeCiclo(tx, {
-              link: nuevoLink,
-              inscripcionId: createdInsc.id,
-              dias,
-            });
-
-            // Link legacy sin fecha_inicio_ciclo: aplicarCorrimientoDeCiclo no
-            // puede moverlo, pero el VERDUGO solo mira fecha_inscripcion, así que
-            // se corre esa para no perder la última clase.
-            if (!corrido) {
-              await tx.inscripciones.update({
-                where: { id: createdInsc.id },
-                data: {
-                  fecha_inscripcion: sumarDiasUTC(createdInsc.fecha_inscripcion, dias),
-                  actualizado_en: new Date(),
-                },
-              });
-            }
-
-            console.log(
-              `Cambio de horario ${createdInsc.id}: última clase ${ultimaClase.toISOString().slice(0, 10)} pasa del cierre; ancla del ciclo corrida ${dias} día(s).`
-            );
-
-            inscripcionRespuesta = await tx.inscripciones.findUnique({
-              where: { id: createdInsc.id },
-              include: { horarios_clases: true },
-            });
-          }
         }
       }
 
@@ -1203,7 +961,6 @@ export const inscripcionService = {
       return inscripcionRespuesta
     });
   },
-  // ... al final de inscripcionService
 
   // =================================================================
   // 📅 ACTUALIZAR FECHA DE INICIO (Desde Validación de Pago)
@@ -1393,8 +1150,7 @@ export const inscripcionService = {
     if (ultimoLink) {
       const inicio = aFechaUTC(ultimoLink.fecha_inicio_ciclo);
       const fin = aFechaUTC(ultimoLink.fecha_fin_ciclo);
-      const corte = finCicloEfectivo(ultimoLink.fecha_inicio_ciclo, ultimoLink.fecha_fin_ciclo);
-      const esVigente = ultimoLink.fecha_fin_ciclo === null;
+      const corte = aFechaUTC(ultimoLink.fecha_fin_ciclo);
 
       // Mismas llaves que filaCiclo del historial, para que el front no tenga
       // que aprender un segundo vocabulario de fechas.
@@ -1402,16 +1158,7 @@ export const inscripcionService = {
         fecha_inicio_ciclo: inicio,
         fecha_fin_ciclo: fin,
         fecha_corte_ciclo: corte,
-        es_vigente: esVigente,
       };
-
-      // Si el ciclo sigue corriendo, el siguiente arranca al día siguiente del
-      // corte; si ya cerró, hoy. Esta es la fecha que el front puede mandar
-      // como fecha_inicio_ciclo al validar el pago (BL-006).
-      if (esVigente && corte) {
-        const siguiente = sumarDiasUTC(corte, 1);
-        if (siguiente > fechaInicioSugerida) fechaInicioSugerida = siguiente;
-      }
     }
 
     return {
@@ -1427,13 +1174,13 @@ export const inscripcionService = {
       plan:
         conceptoPlan && conceptoPlan.activo
           ? {
-              id: conceptoPlan.id,
-              codigo_interno: conceptoPlan.codigo_interno,
-              nombre: conceptoPlan.nombre,
-              precio_base: Number(conceptoPlan.precio_base),
-              cantidad_clases_semanal: conceptoPlan.cantidad_clases_semanal,
-              activo: conceptoPlan.activo,
-            }
+            id: conceptoPlan.id,
+            codigo_interno: conceptoPlan.codigo_interno,
+            nombre: conceptoPlan.nombre,
+            precio_base: Number(conceptoPlan.precio_base),
+            cantidad_clases_semanal: conceptoPlan.cantidad_clases_semanal,
+            activo: conceptoPlan.activo,
+          }
           : null,
       ultimo_ciclo: ultimoCiclo,
       // Se formatea en UTC a propósito: diaLimaAFechaUTC y sumarDiasUTC trabajan
@@ -1540,18 +1287,6 @@ export const inscripcionService = {
         }
       });
 
-      // =================================================================
-      // 🚩 BL-001: una INDIVIDUAL NO genera ciclo.
-      //
-      // El link se MANTIENE porque es el puente inscripción ↔ deuda que
-      // pagos.service.js necesita para activar la inscripción y generar la
-      // clase; quitarlo rompería el flujo de pago. Lo que cambia es que nace
-      // CERRADO en la fecha de la clase en vez de con fecha_fin_ciclo: null.
-      //
-      // Sin esto, finCicloEfectivo() le derivaba inicio + 30 días y una clase
-      // suelta se reportaba como un ciclo mensual abierto en el historial, el
-      // export BL-013 y el dashboard.
-      // =================================================================
       await tx.inscripciones_deudas_link.create({
         data: {
           inscripcion_id: nuevaInscripcion.id,
@@ -1842,11 +1577,12 @@ function datosInscripcion(inscripcion) {
 // Fila de un ciclo real (con link de deuda).
 // Las 14 primeras llaves son el contrato que ya consume el frontend.
 function filaCiclo(inscripcion, link, numeroMesCiclo) {
+  const hoyLima = dayjs().tz('America/Lima').startOf('day');
   const cuenta = link.cuentas_por_cobrar;
   const inicio = aFechaUTC(link.fecha_inicio_ciclo);
   const fin = aFechaUTC(link.fecha_fin_ciclo);
-  const corte = finCicloEfectivo(link.fecha_inicio_ciclo, link.fecha_fin_ciclo);
-  const esVigente = link.fecha_fin_ciclo === null;
+  const corte = aFechaUTC(link.fecha_fin_ciclo);
+  const esVigente = hoyLima.isBefore(link.fecha_fin_ciclo, 'day');
 
   return {
     ...datosInscripcion(inscripcion),
@@ -1869,7 +1605,7 @@ function filaCiclo(inscripcion, link, numeroMesCiclo) {
     sin_vigencia: inicio === null,              // sin fecha_inicio_ciclo en BD
     dias_ciclo: diasEntreUTC(inicio, corte),
     fecha_inicio_ciclo_label: formatFechaEs(inicio),
-    fecha_fin_ciclo_label: fin ? formatFechaEs(fin) : 'Vigente',
+    fecha_fin_ciclo_label: fin ? formatFechaEs(fin) : 'S/F',
     fecha_corte_ciclo_label: formatFechaEs(corte),
     fecha_vencimiento_pago: cuenta?.fecha_vencimiento ?? null,
   };
@@ -1878,16 +1614,27 @@ function filaCiclo(inscripcion, link, numeroMesCiclo) {
 // Fila de una inscripción que todavía no generó cuenta por cobrar.
 // 🔧 BL-011: mismo juego de llaves que filaCiclo — antes esta rama omitía
 // es_estimado y metía un Timestamp(6) crudo en fecha_inicio_ciclo.
-function filaSinCuenta(inscripcion) {
+async function filaSinCuenta(inscripcion) {
   const inicio = aFechaUTC(inscripcion.fecha_inscripcion);
-  const corte = finCicloEfectivo(inscripcion.fecha_inscripcion, null);
+
+  const inscReciente = await prisma.inscripciones_deudas_link.findFirst({
+    where: {
+      inscripcion_id: inscripcion.id,
+    },
+    orderBy: {
+      id: 'desc'
+    }
+  });
+  const fin = aFechaUTC(inscReciente.fecha_fin_ciclo);
+
+  const corte = aFechaUTC(inscReciente.fecha_fin_ciclo);
 
   return {
     ...datosInscripcion(inscripcion),
 
     numero_mes_ciclo: 1,
     fecha_inicio_ciclo: inicio,
-    fecha_fin_ciclo: null,
+    fecha_fin_ciclo: fin,
     fecha_corte_ciclo: corte,
     estado_pago_mes: 'SIN_CUENTA',
     monto_mes: 0,
@@ -1899,7 +1646,7 @@ function filaSinCuenta(inscripcion) {
     sin_vigencia: inicio === null,
     dias_ciclo: diasEntreUTC(inicio, corte),
     fecha_inicio_ciclo_label: formatFechaEs(inicio),
-    fecha_fin_ciclo_label: 'Vigente',
+    fecha_fin_ciclo_label: fin ? formatFechaEs(fin) : 'S/F',
     fecha_corte_ciclo_label: formatFechaEs(corte),
     fecha_vencimiento_pago: null,
   };

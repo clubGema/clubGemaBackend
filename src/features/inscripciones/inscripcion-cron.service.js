@@ -5,7 +5,7 @@ import { twilioProvider } from '../../shared/services/twilio.whatsapp.service.js
 import { emailService } from '../../shared/services/brevo.email.service.js';
 import { inscripcionService } from './inscripcion.service.js';
 import { merchService } from '../merch/merch.service.js';
-import { DIAS_CICLO, aFechaUTC, diaLimaAFechaUTC } from '../../shared/utils/ciclo.util.js';
+import { aFechaUTC, diaLimaAFechaUTC } from '../../shared/utils/ciclo.util.js';
 // 🎯 BL-001
 import { TIPO_INSCRIPCION, esIndividual, whereTipoInscripcion } from '../../shared/utils/tipo-inscripcion.util.js';
 import { DIAS_VENTANA_INDIVIDUAL } from '../../shared/utils/clase-fecha.util.js';
@@ -134,16 +134,18 @@ class InscripcionCronService {
 
       for (const insc of inscripcionesActivas) {
         try {
-          const fechaInicio = dayjs(insc.fecha_inscripcion).tz('America/Lima').startOf('day');
-          const diasTranscurridos = hoyLima.diff(fechaInicio, 'day');
+          const resultado = await prisma.inscripciones_deudas_link.findFirst({
+            where: {
+              inscripcion_id: insc.id,
+            },
+            orderBy: {
+              id: 'desc'
+            }
+          });
+          const fechaFinCiclo = resultado.fecha_fin_ciclo;
+          if (!fechaFinCiclo) continue;
 
-          if (diasTranscurridos >= DIAS_CICLO) {
-            // 🚩 Cierre real del ciclo: día 30 exacto, no "hoy" (que puede traer tolerancia)
-            // 🔧 BL-011: a mediodía, para que el truncado a @db.Date no dependa
-            // de que las 05:00Z caigan en el día correcto. DIAS_CICLO vive en
-            // shared/utils/ciclo.util.js, que es la única definición del largo.
-            const fechaFinCicloReal = fechaInicio.add(DIAS_CICLO, 'day').hour(12).toDate();
-
+          if (hoyLima.isAfter(fechaFinCiclo, 'day')) {
             await prisma.$transaction(async (tx) => {
               await tx.inscripciones.update({
                 where: { id: insc.id },
@@ -161,13 +163,13 @@ class InscripcionCronService {
                   fecha_fin_ciclo: null
                 },
                 data: {
-                  fecha_fin_ciclo: fechaFinCicloReal
+                  fecha_fin_ciclo: fechaFinCiclo
                 }
               });
             });
 
             totalFinalizados++;
-            logger.info(`[VERDUGO] ✅ Slot ${insc.id} liquidado (Días: ${diasTranscurridos}) y ciclo de deuda cerrado en ${fechaFinCicloReal.toISOString()}.`);
+            logger.info(`[VERDUGO] ✅ Slot ${insc.id} liquidado (Ciclo de deuda cerrado en ${fechaFinCiclo.toISOString()}.`);
           }
         } catch (innerError) {
           logger.error(`[VERDUGO ERROR] ID ${insc.id}: ${innerError.message}`);
@@ -246,12 +248,6 @@ class InscripcionCronService {
                 }
               });
 
-              // 🚩 BL-001: cerramos el ciclo del link. Antes este cron
-              // finalizaba la inscripción pero dejaba fecha_fin_ciclo en null
-              // PARA SIEMPRE, y finCicloEfectivo() le derivaba inicio + 30d, así
-              // que una clase suelta se reportaba como ciclo mensual abierto.
-              // Mismo patrón que ya usa el VERDUGO y las finalizaciones
-              // voluntarias.
               await tx.inscripciones_deudas_link.updateMany({
                 where: {
                   inscripcion_id: insc.id,
@@ -358,33 +354,20 @@ class InscripcionCronService {
 
     let totalFinalizados = 0;
 
-    for (const { alumno_id } of morososParciales) {
-      // 3. Buscamos su Fecha Madre para calcular el ciclo
-      // 🚩 BL-001: la "fecha madre" del ciclo mensual solo puede salir de una
-      // inscripción REGULAR. Antes podía tomar una clase suelta y calcular el
-      // ciclo del alumno a 30 días de una clase de un día.
-      const inscripcionMadre = await prisma.inscripciones.findFirst({
+    for (const { alumno_id, id } of morososParciales) {
+
+      const link = await prisma.inscripciones_deudas_link.findFirst({
         where: {
-          alumno_id: alumno_id,
-          estado: 'ACTIVO',
-          ...whereTipoInscripcion(TIPO_INSCRIPCION.REGULAR),
+          cuenta_id: id
         },
-        orderBy: { fecha_inscripcion: 'asc' },
-      });
-
-      if (!inscripcionMadre) continue;
-
-      // 4. Calculamos fin de mes (Fecha Madre + 30 días)
-      // 🔥 CAMBIO AQUÍ: Sumamos 30 días y calculamos el inicio de ese día en hora de Lima
-      // 🔧 BL-001: DIAS_CICLO en vez del 30 literal (ciclo.util.js es la única definición).
-      const finCiclo = dayjs(inscripcionMadre.fecha_inscripcion)
-        .tz(TZ_LIMA)
-        .add(DIAS_CICLO, 'day')
-        .startOf('day');
+        orderBy: { id: 'desc' }
+      })
+      const fechaFinCiclo = link.fecha_fin_ciclo;
+      if (!fechaFinCiclo) continue;
 
       // 5. Calculamos el "Día del Juicio"
       // 🔥 CAMBIO AQUÍ: Restamos los días de anticipación usando dayjs
-      const diaDelJuicioParcial = finCiclo.subtract(diasAnticipacionLiquidador, 'day');
+      const diaDelJuicioParcial = fechaFinCiclo.subtract(diasAnticipacionLiquidador, 'day');
 
       // 6. ¿Llegó el momento de liquidar?
       // 🔥 CAMBIO AQUÍ: Comparamos directamente con el valor absoluto en milisegundos (.valueOf())

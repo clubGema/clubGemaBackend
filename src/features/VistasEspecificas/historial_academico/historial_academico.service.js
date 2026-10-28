@@ -3,7 +3,6 @@ import { ApiError } from '../../../shared/utils/error.util.js';
 import { formatFechaEs } from '../../../shared/utils/date.util.js';
 // 🎯 BL-011: la vigencia del ciclo ahora vive en un solo lugar.
 import {
-  DIAS_CICLO,
   ESTADOS_VALIDOS_PARA_CICLO,
   sumarDiasUTC,
 } from '../../../shared/utils/ciclo.util.js';
@@ -44,11 +43,6 @@ const estaVencida = (fechaCorte) => {
   if (!fechaCorte) return false;
   return fechaCorte.getTime() < Date.now();
 };
-
-// 🎯 BL-013 / BL-011: DIAS_CICLO (30) y sumarDiasUTC se movieron a
-// shared/utils/ciclo.util.js, que es ahora la única definición del cierre real
-// del ciclo. Ojo: NO es el mismo número que DIAS_VIGENCIA_INSCRIPCION (29),
-// que es la regla del badge de la tabla.
 
 export const historialAcademicoService = {
   // =================================================================
@@ -625,7 +619,7 @@ export const historialAcademicoService = {
           })
           .map((l) => (l.fecha_fin_ciclo
             ? new Date(l.fecha_fin_ciclo).getTime()
-            : sumarDiasUTC(l.fecha_inicio_ciclo, DIAS_CICLO).getTime()));
+            : sumarDiasUTC(l.fecha_inicio_ciclo, 21).getTime()));
 
         // Multi-sede: el corte más lejano = hasta cuándo está cubierto.
         const fechaCorte = cortesVigentes.length > 0
@@ -657,8 +651,8 @@ export const historialAcademicoService = {
         // última de la lista (la más antigua por fecha_inscripcion).
         const masAntigua = inscripciones.some((i) => i.creado_en)
           ? [...inscripciones]
-              .filter((i) => i.creado_en)
-              .sort((a, b) => new Date(a.creado_en) - new Date(b.creado_en))[0]
+            .filter((i) => i.creado_en)
+            .sort((a, b) => new Date(a.creado_en) - new Date(b.creado_en))[0]
           : inscripciones[inscripciones.length - 1];
         const sedeOrigen = masAntigua?.horarios_clases?.canchas?.sedes?.nombre || 'N/A';
 

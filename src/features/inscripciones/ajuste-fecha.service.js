@@ -10,6 +10,7 @@ import {
 } from '../../shared/utils/feriado.util.js';
 import { cargarSlotsRecuperacion } from '../../shared/utils/recuperacion-slot.util.js';
 import { detectarChoquesCiclo, lanzarSiHayChoques } from '../asistencia/asistencia.service.js';
+import { fechaUltimaClase } from '../../shared/utils/fecha-ultima-clase.util.js';
 
 // =================================================================
 // BL-006: ajuste de fecha de inicio de un paquete YA PAGADO.
@@ -322,10 +323,13 @@ export const ajusteFechaService = {
           actualizado_en: new Date(),
         },
       });
+
+      const ids = ctx.inscripciones.map(i => i.id);
+      const ultimaFecha = await fechaUltimaClase(ids);
       await tx.inscripciones_deudas_link.updateMany({
         where: { cuenta_id: cuentaId },
         data: esInd
-          ? { fecha_inicio_ciclo: fechaTs, fecha_fin_ciclo: fechaTs }
+          ? { fecha_inicio_ciclo: fechaTs, fecha_fin_ciclo: ultimaFecha }
           : { fecha_inicio_ciclo: fechaTs },
       });
 

@@ -1,4 +1,4 @@
-import { DIAS_CICLO, aFechaUTC, diasEntreUTC } from './ciclo.util.js';
+import { aFechaUTC, diasEntreUTC } from './ciclo.util.js';
 import { claveDiaDesdeFecha, claveDiaLima } from './feriado.util.js';
 import { ESTADOS_CLASE_VIGENTE } from './reprogramacion-ciclo.util.js';
 
@@ -65,27 +65,4 @@ export const separarClasesParaCambio = (clases, claveEfectiva) => {
   }
 
   return { retenidas, idsAEliminar, consumidas };
-};
-
-/**
- * Cuántos días hay que correr el ancla del ciclo para que el cierre del
- * VERDUGO no se lleve la última clase.
- *
- * El VERDUGO finaliza la inscripción cuando pasaron DIAS_CICLO días desde
- * `fecha_inscripcion` (día de Lima): la mañana del día +30 ya no existe. Una
- * clase en el día +30 o posterior se perdería, así que el último día utilizable
- * es +29 (DIAS_CICLO − 1).
- *
- * @param {Date|string} fechaInscripcion ancla actual (timestamp)
- * @param {Date|string} ultimaClase fecha de la última clase generada
- * @returns {number} 0 si ya cabe; > 0 = días a sumar al ancla
- */
-export const diasParaCubrirUltimaClase = (fechaInscripcion, ultimaClase) => {
-  // El VERDUGO cuenta desde el día CALENDARIO DE LIMA del timestamp, no desde su
-  // día UTC (un timestamp tardío en Lima ya cae al día UTC siguiente).
-  const ancla = aFechaUTC(`${claveDiaLima(fechaInscripcion)}T12:00:00.000Z`);
-  const dias = diasEntreUTC(ancla, ultimaClase);
-  if (dias === null) return 0;
-
-  return Math.max(0, dias - (DIAS_CICLO - 1));
 };

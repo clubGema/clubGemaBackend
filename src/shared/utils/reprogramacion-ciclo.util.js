@@ -1,3 +1,4 @@
+import dayjs from 'dayjs';
 import { aFechaUTC, sumarDiasUTC, diasEntreUTC } from './ciclo.util.js';
 import { claveDiaDesdeFecha } from './feriado.util.js';
 
@@ -72,8 +73,15 @@ export const cargarCiclosVigentes = async (tx, inscripcionIds, opciones = {}) =>
   const ciclos = new Map();
   if (ids.length === 0) return ciclos;
 
+  const hoyLima = dayjs().tz('America/Lima').startOf('day');
+
   const links = await tx.inscripciones_deudas_link.findMany({
-    where: { inscripcion_id: { in: ids }, fecha_fin_ciclo: null },
+    where: {
+      inscripcion_id: { in: ids },
+      fecha_fin_ciclo: {
+        gte: hoyLima.toDate(),
+      }
+    },
     orderBy: { creado_en: 'desc' },
   });
 

@@ -56,37 +56,37 @@ export const iniciarCronJobs = () => {
   );
 
   // ------------------------------------------------------------------
-// TAREA 3: EL COBRADOR DE RENOVACIONES FANTASMA (Cada hora, o diario)
-// Objetivo: Revertir renovaciones PENDIENTES cuyo plazo de pago (48h) ya venció.
-// ------------------------------------------------------------------
-cron.schedule(
-  '0 3 * * *', // Diario a las 3 AM, después del Verdugo (que corre a la 1 AM)
-  async () => {
-    logger.info(`[CRON] Iniciando limpieza de renovaciones abandonadas: ${new Date().toISOString()}`);
-    try {
-      await inscripcionCronService.limpiarRenovacionesAbandonadas();
-    } catch (error) {
-      logger.error('[CRON ERROR] Falló el Cobrador de Renovaciones Fantasma:', error);
-    }
-  },
-  { timezone: 'America/Lima' }
-);
+  // TAREA 3: EL COBRADOR DE RENOVACIONES FANTASMA (Cada hora, o diario)
+  // Objetivo: Revertir renovaciones PENDIENTES cuyo plazo de pago (48h) ya venció.
+  // ------------------------------------------------------------------
+  cron.schedule(
+    '0 3 * * *', // Diario a las 3 AM, después del Verdugo (que corre a la 1 AM)
+    async () => {
+      logger.info(`[CRON] Iniciando limpieza de renovaciones abandonadas: ${new Date().toISOString()}`);
+      try {
+        await inscripcionCronService.limpiarRenovacionesAbandonadas();
+      } catch (error) {
+        logger.error('[CRON ERROR] Falló el Cobrador de Renovaciones Fantasma:', error);
+      }
+    },
+    { timezone: 'America/Lima' }
+  );
 
-// Libera el stock de las órdenes de merch que vencieron sin pago (cada hora).
-cron.schedule(
-  '30 * * * *',
-  async () => {
-    try {
-      const liberadas = await merchService.limpiarOrdenesVencidas();
-      if (liberadas > 0) logger.info(`[CRON] Órdenes de merch vencidas liberadas: ${liberadas}`);
-    } catch (error) {
-      logger.error('[CRON ERROR] Falló la limpieza de órdenes de merch:', error);
-    }
-  },
-  { timezone: 'America/Lima' }
-);
+  // Libera el stock de las órdenes de merch que vencieron sin pago (cada hora).
+  cron.schedule(
+    '30 * * * *',
+    async () => {
+      try {
+        const liberadas = await merchService.limpiarOrdenesVencidas();
+        if (liberadas > 0) logger.info(`[CRON] Órdenes de merch vencidas liberadas: ${liberadas}`);
+      } catch (error) {
+        logger.error('[CRON ERROR] Falló la limpieza de órdenes de merch:', error);
+      }
+    },
+    { timezone: 'America/Lima' }
+  );
 
-cron.schedule(
+  cron.schedule(
     '5 1 * * *',
     async () => {
       logger.info(`[CRON] Iniciando revisión nocturna de clases únicas: ${new Date().toISOString()}`);
@@ -111,37 +111,6 @@ cron.schedule(
     },
     { timezone: 'America/Lima' }
   );
-
-  // ------------------------------------------------------------------
-  // TAREA 3: EL PROFETA (Todos los días a las 00:30 AM)  30 0 * * *
-  // Objetivo: Generar la deuda del próximo mes X días antes del vencimiento.
-  // ------------------------------------------------------------------
-  // cron.schedule(
-  //   '30 0 * * *',
-  //   async () => {
-  //     logger.info(`[CRON] El Profeta buscando renovaciones futuras...`);
-  //     try {
-  //       // 1. Obtener días de anticipación
-  //       const param = await prisma.parametros_sistema.findUnique({
-  //         where: { clave: 'DIAS_ANTICIPACION_RENOVACION' },
-  //       });
-  //       const diasAnticipacion = param ? Number.parseInt(param.valor) : 5;
-
-  //       // 2. Invocar al Servicio de Inscripciones
-  //       const renovacionesGeneradas =
-  //         await inscripcionService.generarRenovacionesMasivas(diasAnticipacion);
-
-  //       if (renovacionesGeneradas > 0) {
-  //         logger.info(
-  //           `[PROFETA] Se generaron ${renovacionesGeneradas} deudas de renovación anticipada.`
-  //         );
-  //       }
-  //     } catch (error) {
-  //       logger.error('[CRON ERROR] Falló el Profeta:', error);
-  //     }
-  //   },
-  //   { timezone: 'America/Lima' }
-  // );
 
   // ------------------------------------------------------------------
   // TAREA 4: LA LIMPIEZA DE TICKETS (Todos los días a las 01:00 AM)

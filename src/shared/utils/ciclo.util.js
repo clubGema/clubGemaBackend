@@ -24,29 +24,9 @@ dayjs.extend(timezone);
 
 export const TZ_LIMA = 'America/Lima';
 
-// Cierre real del ciclo regular que aplica el cron VERDUGO
-// (inscripcion-cron.service.js -> gestionarVencimientos).
-// Ojo: NO es el mismo número que DIAS_VIGENCIA_INSCRIPCION (29), que es la
-// regla del badge de la tabla de alumnos.
-export const DIAS_CICLO = 30;
-
-// Lo que se vende es CLASES, no días calendario: el plan mensual de 1 día a la
-// semana garantiza exactamente 5 clases por ciclo. DIAS_CICLO (30) es solo el
-// cierre administrativo que aplica el VERDUGO; un cambio de horario genera por
-// conteo contra esta constante (ver cambio-horario.util.js).
 export const CLASES_POR_CICLO = 4;
 
-// 🎯 BL-001: una inscripción INDIVIDUAL es una clase suelta, no un ciclo.
-// Su "ciclo" dura el día de la clase, así que el cron de individuales cierra
-// fecha_fin_ciclo en la fecha de esa clase en vez de a los 30 días.
 export const DIAS_CICLO_INDIVIDUAL = 1;
-
-/**
- * 🎯 BL-001: cuántos días dura el ciclo de una inscripción según su tipo.
- * NULL se asume REGULAR (ver tipo-inscripcion.util.js).
- */
-export const diasCicloDeTipo = (inscripcionOTipo) =>
-  esIndividual(inscripcionOTipo) ? DIAS_CICLO_INDIVIDUAL : DIAS_CICLO;
 
 // 🎯 Estados reales de registros_asistencia: PRESENTE | FALTA | CANCELADO | PROGRAMADA.
 // CANCELADO no cuenta como clase del ciclo.
@@ -91,19 +71,6 @@ export const diasEntreUTC = (desde, hasta) => {
 };
 
 /**
- * 🎯 BL-011: fin real del ciclo.
- * fecha_fin_ciclo es NULL mientras el ciclo está abierto, así que se deriva
- * fecha_inicio_ciclo + 30d, que es el cierre que aplicará el cron VERDUGO.
- * Misma definición que ya usaba el exportador BL-013.
- */
-export const finCicloEfectivo = (inicio, fin) => {
-  if (fin) return aFechaUTC(fin);
-  const ini = aFechaUTC(inicio);
-  if (!ini) return null;
-  return sumarDiasUTC(ini, DIAS_CICLO);
-};
-
-/**
  * Rango del mes en UTC: [medianoche del día 1, fin del último día].
  */
 export const rangoMesUTC = (mes, anio) => ({
@@ -122,7 +89,7 @@ export const rangoMesUTC = (mes, anio) => ({
 export const cicloSolapaMes = (inicio, fin, mes, anio) => {
   const ini = aFechaUTC(inicio);
   if (!ini) return false;
-  const finEfectivo = finCicloEfectivo(inicio, fin);
+  const finEfectivo = aFechaUTC(fin);
   const { desde, hasta } = rangoMesUTC(mes, anio);
   return ini <= hasta && finEfectivo >= desde;
 };
