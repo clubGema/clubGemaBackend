@@ -390,6 +390,8 @@ model solicitudes_lesion {
   descripcion_lesion   String
   url_evidencia_medica String           @db.VarChar(255)
   estado               String?          @default("PENDIENTE") @db.VarChar(20)
+  fecha_inicio         DateTime?        @db.Date
+  fecha_fin            DateTime?        @db.Date
   revisado_por         Int?
   notas_admin          String?
   congelamientos       congelamientos[]
