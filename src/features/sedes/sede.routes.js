@@ -67,4 +67,11 @@ router.get(
   sedeController.getOcupacionDashboard
 );
 
+router.get(
+  '/reporte-ocupacion',
+  authenticate,
+  authorize('Administrador', 'Coordinador'),
+  sedeController.getReporteOcupacionDetallado
+);
+
 export default router;

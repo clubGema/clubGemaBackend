@@ -1,0 +1,92 @@
+import { PrismaClient } from '@prisma/client';
+const prisma = new PrismaClient();
+
+async function testClean() {
+  const alumnoId = 793;
+  console.log(`Probando limpieza para alumno ${alumnoId}...`);
+
+  await prisma.$executeRawUnsafe(`
+    DO $$ 
+    BEGIN
+      -- 1. Asistencias
+      IF to_regclass('public.registros_asistencia') IS NOT NULL THEN
+        DELETE FROM public.registros_asistencia 
+        WHERE inscripcion_id IN (SELECT id FROM public.inscripciones WHERE alumno_id = ${alumnoId});
+      END IF;
+
+      -- 2. Congelamientos (si existe la tabla)
+      IF to_regclass('public.congelamientos') IS NOT NULL THEN
+        DELETE FROM public.congelamientos 
+        WHERE inscripcion_id IN (SELECT id FROM public.inscripciones WHERE alumno_id = ${alumnoId});
+      END IF;
+
+      -- 3. Recuperaciones y lesiones
+      IF to_regclass('public.recuperaciones') IS NOT NULL THEN
+        DELETE FROM public.recuperaciones WHERE alumno_id = ${alumnoId};
+      END IF;
+      IF to_regclass('public.solicitudes_lesion') IS NOT NULL THEN
+        DELETE FROM public.solicitudes_lesion WHERE alumno_id = ${alumnoId};
+      END IF;
+
+      -- 4. Movimientos financieros
+      IF to_regclass('public.movimientos_financieros') IS NOT NULL THEN
+        DELETE FROM public.movimientos_financieros 
+        WHERE pago_id IN (
+          SELECT p.id FROM public.pagos p
+          JOIN public.cuentas_por_cobrar c ON p.cuenta_id = c.id
+          WHERE c.alumno_id = ${alumnoId}
+        );
+      END IF;
+
+      -- 5. Merch
+      IF to_regclass('public.alumno_merch') IS NOT NULL THEN
+        DELETE FROM public.alumno_merch 
+        WHERE alumno_id = ${alumnoId} 
+           OR cuenta_id IN (SELECT id FROM public.cuentas_por_cobrar WHERE alumno_id = ${alumnoId});
+      END IF;
+
+      -- 6. Pagos
+      IF to_regclass('public.pagos') IS NOT NULL THEN
+        DELETE FROM public.pagos 
+        WHERE cuenta_id IN (SELECT id FROM public.cuentas_por_cobrar WHERE alumno_id = ${alumnoId});
+      END IF;
+
+      -- 7. Descuentos y auditorías
+      IF to_regclass('public.descuentos_aplicados') IS NOT NULL THEN
+        DELETE FROM public.descuentos_aplicados 
+        WHERE cuenta_id IN (SELECT id FROM public.cuentas_por_cobrar WHERE alumno_id = ${alumnoId});
+      END IF;
+      IF to_regclass('public.auditoria_ajuste_fecha') IS NOT NULL THEN
+        DELETE FROM public.auditoria_ajuste_fecha 
+        WHERE cuenta_id IN (SELECT id FROM public.cuentas_por_cobrar WHERE alumno_id = ${alumnoId});
+      END IF;
+
+      -- 8. Puente deudas
+      IF to_regclass('public.inscripciones_deudas_link') IS NOT NULL THEN
+        DELETE FROM public.inscripciones_deudas_link 
+        WHERE inscripcion_id IN (SELECT id FROM public.inscripciones WHERE alumno_id = ${alumnoId})
+           OR cuenta_id IN (SELECT id FROM public.cuentas_por_cobrar WHERE alumno_id = ${alumnoId});
+      END IF;
+
+      -- 9. Cuentas por cobrar
+      IF to_regclass('public.cuentas_por_cobrar') IS NOT NULL THEN
+        DELETE FROM public.cuentas_por_cobrar WHERE alumno_id = ${alumnoId};
+      END IF;
+
+      -- 10. Inscripciones
+      IF to_regclass('public.inscripciones') IS NOT NULL THEN
+        DELETE FROM public.inscripciones WHERE alumno_id = ${alumnoId};
+      END IF;
+
+      -- 11. Notificaciones
+      IF to_regclass('public.notificaciones') IS NOT NULL THEN
+        DELETE FROM public.notificaciones WHERE alumno_id = ${alumnoId} OR usuario_id = ${alumnoId};
+      END IF;
+    END $$;
+  `);
+
+  console.log('¡Limpieza ejecutada sin errores!');
+}
+
+testClean().catch(console.error).finally(() => prisma.$disconnect());
+

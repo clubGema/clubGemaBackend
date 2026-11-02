@@ -11,7 +11,7 @@ import { merchService } from '../merch/merch.service.js';
 import { esIndividual } from '../../shared/utils/tipo-inscripcion.util.js';
 // 🆕 BL-006: la fecha de inicio que manda el admin se normaliza con el mismo
 // helper (y el mismo ancla a mediodía) que el resto de escritores de ciclo.
-import { parsearFechaInicioCiclo } from '../../shared/utils/ciclo.util.js';
+import { parsearFechaInicioCiclo, CLASES_POR_CICLO } from '../../shared/utils/ciclo.util.js';
 // 🆕 BL-006: si la fecha nueva mueve la clase de una INDIVIDUAL, hay que
 // resolverla y validarla con las MISMAS funciones que usó la venta (BL-003).
 import { calcularPrimeraFechaClase } from '../../shared/utils/clase-fecha.util.js';
@@ -221,8 +221,29 @@ export const pagosService = {
           }
         });
 
-        const ids = links.map(l => l.inscripcion_id)
-        const ultimaFecha = await fechaUltimaClase(ids);
+        const ids = links.map(l => l.inscripcion_id);
+
+        // 🎯 Detección de meses adelantados:
+        let cantidadClasesPorInscripcion = CLASES_POR_CICLO;
+        const matchMeses = pago.cuentas_por_cobrar?.detalle_adicional?.match(/(\d+)\s*meses?\s*por\s*adelantado/i);
+        if (matchMeses) {
+          const mesesDetectados = Number.parseInt(matchMeses[1], 10);
+          if (mesesDetectados >= 1) {
+            cantidadClasesPorInscripcion = mesesDetectados * CLASES_POR_CICLO;
+          }
+        } else if (links.length > 0 && links[0].fecha_inicio_ciclo && links[0].fecha_fin_ciclo) {
+          const diasDiff = Math.round((new Date(links[0].fecha_fin_ciclo) - new Date(links[0].fecha_inicio_ciclo)) / (1000 * 60 * 60 * 24));
+          const semanasAprox = Math.round(diasDiff / 7) + 1;
+          if (semanasAprox > CLASES_POR_CICLO) {
+            cantidadClasesPorInscripcion = semanasAprox;
+          }
+        }
+
+        const ultimaFecha = await fechaUltimaClase(ids, {
+          cantidad: cantidadClasesPorInscripcion,
+          fechaInicio: nuevoInicio ?? undefined,
+          tx,
+        });
 
         // =============================================================
         // 🤝 BL-010: PRE-VALIDAR CHOQUES CON RECUPERACIONES ANTES DE MUTAR.
@@ -246,6 +267,7 @@ export const pagosService = {
             tipo_inscripcion: insc.tipo_inscripcion,
             alumno_id: insc.alumno_id,
             hora_inicio: insc.horarios_clases.hora_inicio,
+            cantidad: cantidadClasesPorInscripcion,
           });
         }
 
@@ -372,6 +394,7 @@ export const pagosService = {
               // pre-validado arriba, esto es la red de seguridad).
               alumno_id: insc.alumno_id,
               hora_inicio: insc.horarios_clases.hora_inicio,
+              cantidad: cantidadClasesPorInscripcion,
             });
           }
         }

@@ -65,3 +65,33 @@ export const renovarHistoricoSchema = z
       .optional(),
   })
   .strict();
+
+// Esquema para inscripción con meses por adelantado
+export const inscribirMesesAdelantadosSchema = z
+  .object({
+    alumno_id: z.coerce
+      .number({ invalid_type_error: 'alumno_id debe ser numérico' })
+      .int('alumno_id debe ser un entero')
+      .positive('alumno_id debe ser mayor a 0'),
+
+    horario_ids: z
+      .array(z.coerce.number().int().positive('Cada horario_id debe ser mayor a 0'))
+      .min(1, 'Debes enviar al menos un horario'),
+
+    meses_adelantados: z.coerce
+      .number({ invalid_type_error: 'meses_adelantados debe ser numérico' })
+      .int('meses_adelantados debe ser un entero')
+      .min(1, 'La cantidad de meses por adelantado debe ser mayor o igual a 1')
+      .default(1),
+
+    fecha_inicio_electiva: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato de fecha inválido (YYYY-MM-DD)')
+      .optional(),
+
+    incluye_camiseta: z.boolean().optional(),
+    forzar_concepto_vigente: z.boolean().optional(),
+    merch_ids: z.array(z.coerce.number().int().positive()).optional(),
+    sede_recojo_id: z.coerce.number().int().positive().optional(),
+  })
+  .passthrough();

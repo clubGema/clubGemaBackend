@@ -114,7 +114,7 @@ export const asistenciaService = {
    */
   generarClasesFuturas: async (tx, params) => {
     // 🔥 Desestructuramos incluyendo el nuevo parámetro fecha_inicio
-    const { inscripcion_id, dia_semana, usuario_admin_id, coordinador_id, fecha_inicio } = params;
+    const { inscripcion_id, dia_semana, usuario_admin_id, coordinador_id, fecha_inicio, cantidad } = params;
 
     // =================================================================
     // 🛡️ BL-001: GUARDIA DE TIPO (REGULAR vs INDIVIDUAL)
@@ -199,7 +199,7 @@ export const asistenciaService = {
     }
 
     // 2. Calculamos las fechas reales de clase dentro de este ciclo
-    const fechasPlanificadas = calcularProximasFechas(fechaInicioCalculo, dia_semana);
+    const fechasPlanificadas = calcularProximasFechas(fechaInicioCalculo, dia_semana, false, cantidad);
 
     // =================================================================
     // 🤝 BL-010: si alguna fecha del ciclo coincide con una recuperación
@@ -222,7 +222,7 @@ export const asistenciaService = {
       fecha: fecha,
       estado: 'PROGRAMADA',
       registrado_por: coordinador_id,
-      comentario: `Generado auto (Ciclo Regular) - Admin ID: ${usuario_admin_id}`,
+      comentario: params.comentario ?? (cantidad && cantidad > 4 ? `Generado auto (${cantidad} clases adelantadas) - Admin ID: ${usuario_admin_id}` : `Generado auto (Ciclo Regular) - Admin ID: ${usuario_admin_id}`),
     }));
 
     // 4. Insertamos usando skipDuplicates para blindar la base de datos
@@ -622,6 +622,7 @@ export const asistenciaService = {
               tipo_sesion: tipo,
               registros_asistencia: ins.registros_asistencia.map(r => ({
                 ...r,
+                falta_anticipada: Boolean(r.comentario?.includes('[FALTA_ANTICIPADA]')),
                 tipo_sesion: r.estado === 'REPROGRAMADO'
                   ? 'REPROGRAMADO'
                   : r.fecha_original
@@ -856,6 +857,15 @@ export const asistenciaService = {
           await tx.registros_asistencia.update({
             where: { id: asistenciaRegistrada.id },
             data: { comentario: `[NO_RECUPERABLE] ${asistenciaRegistrada.comentario || ''}` }
+          });
+        }
+
+        // Si tenía [FALTA_ANTICIPADA] y se marcó FALTA, preservamos la etiqueta para trazabilidad
+        const eraFaltaAnticipada = asistencia.comentario?.includes('[FALTA_ANTICIPADA]');
+        if (eraFaltaAnticipada && asistenciaRegistrada.estado === 'FALTA' && !asistenciaRegistrada.comentario?.includes('[FALTA_ANTICIPADA]')) {
+          await tx.registros_asistencia.update({
+            where: { id: asistenciaRegistrada.id },
+            data: { comentario: `[FALTA_ANTICIPADA] ${asistenciaRegistrada.comentario || ''}`.trim() }
           });
         }
       }

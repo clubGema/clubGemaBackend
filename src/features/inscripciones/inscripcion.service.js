@@ -38,6 +38,7 @@ import { sincronizarPuenteDeuda } from '../../shared/utils/deuda-puente.util.js'
 // 🆕 BL-004: el pre-llenado devuelve los horarios con la misma forma que
 // GET /api/horarios/nivel, reusando el select y el formateador de horarios.
 import { HORARIO_SELECT, formatearHorario } from '../horarios/horario.service.js';
+import { fechaUltimaClase } from '../../shared/utils/fecha-ultima-clase.util.js';
 
 // 🔥 IMPORTAMOS DAYJS Y CONFIGURAMOS LIMA PARA LOS LOGS 🔥
 import dayjs from 'dayjs';
@@ -52,11 +53,26 @@ export const inscripcionService = {
   // =================================================================
   // 🚀 MOTOR MAESTRO DE INSCRIPCIÓN: GEMA ACADEMY (VERSIÓN FINAL)
   // =================================================================
+  inscribirMesesAdelantados: async (data) => {
+    const meses = Number.parseInt(data?.meses_adelantados ?? data?.meses, 10);
+    if (!Number.isInteger(meses) || meses < 1) {
+      throw new ApiError('Debes indicar una cantidad válida de meses por adelantado (entero mayor o igual a 1).', 400);
+    }
+    return await inscripcionService.inscribirPaquete({
+      ...data,
+      meses_adelantados: meses,
+    });
+  },
+
   inscribirPaquete: async (data) => {
     // `incluye_camiseta` es el flag legacy (+S/ 50 fijos): se sigue aceptando.
     // `merch_ids` (opcional) es el reemplazo: productos del catálogo de Merch.
     // `sede_recojo_id` (obligatorio solo si hay merch_ids): sede donde recogerá el pedido.
     const { alumno_id, horario_ids, fecha_inicio_electiva, incluye_camiseta, forzar_concepto_vigente, merch_ids, sede_recojo_id } = data;
+    const meses = Number.parseInt(data.meses_adelantados ?? data.meses ?? 1, 10);
+    if (!Number.isInteger(meses) || meses < 1) {
+      throw new ApiError('La cantidad de meses por adelantado debe ser un número entero mayor o igual a 1.', 400);
+    }
 
     try {
       // 1. Validación de estructura de entrada (Utils sigue sirviendo)
@@ -126,8 +142,13 @@ export const inscripcionService = {
         // 💸 PASO 5: CÁLCULO DE COBRO (Simple y Directo)
         // 💰 BL-002: el precio sale SIEMPRE del catálogo y se normaliza a 2
         // decimales, que es la precisión de la columna Decimal(10,2).
-        let totalCobrar = redondear2(conceptoAplicar.precio_base);
-        let detalleCobro = [`Plan ${horario_ids.length} clases/semana`];
+        const precioMatriculaBase = redondear2(Number(conceptoAplicar.precio_base) * meses);
+        let totalCobrar = precioMatriculaBase;
+        let detalleCobro = [
+          meses > 1
+            ? `Plan ${horario_ids.length} clases/semana (${meses} meses por adelantado)`
+            : `Plan ${horario_ids.length} clases/semana`
+        ];
 
         if (incluye_camiseta) {
           totalCobrar = redondear2(totalCobrar + 50);
@@ -154,7 +175,8 @@ export const inscripcionService = {
         const partesPorSlot = repartirMonto(totalCobrar, inscripcionesCreadas.length);
 
         const ids = inscripcionesCreadas.map(i => i.id);
-        const ultimaFecha = await fechaUltimaClase(ids);
+        const clasesPorHorario = meses * CLASES_POR_CICLO;
+        const ultimaFecha = await fechaUltimaClase(ids, { cantidad: clasesPorHorario, tx });
 
         await tx.inscripciones_deudas_link.createMany({
           data: inscripcionesCreadas.map((ins, i) => ({
@@ -235,6 +257,10 @@ export const inscripcionService = {
           total_a_pagar: montoActualizado,
           cuenta_id: nuevaCuenta.id,
           inscripciones: inscripcionesCreadas,
+          meses_adelantados: meses,
+          cantidad_clases: clasesPorHorario,
+          fecha_inicio_ciclo: inicioReal,
+          fecha_fin_ciclo: ultimaFecha,
           // Llaves nuevas (aditivas): solo informan el merch del cobro combinado.
           total_merch: merchCombo.total,
           merch: merchCombo.lineas

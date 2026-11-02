@@ -22,6 +22,51 @@ const verificarAlumnoRenovacion = (req) => {
 export const inscripcionController = {
 
   // 🚀 MOTOR DE INSCRIPCIÓN / UPGRADE (Consolidado)
+  inscribirMesesAdelantados: async (req, res) => {
+    try {
+      const resultado = await inscripcionService.inscribirMesesAdelantados(req.body);
+
+      res.status(201).json({
+        status: 'success',
+        message: '¡Inscripción por meses adelantados exitosa!',
+        data: resultado,
+      });
+    } catch (error) {
+      if (error instanceof ApiError) {
+        return res.status(error.statusCode).json({
+          status: 'error',
+          message: error.message,
+        });
+      }
+      if (error.code === 'P2002') {
+        return res.status(400).json({
+          status: 'error',
+          message: '⛔ El alumno ya está inscrito en uno de los horarios seleccionados.',
+        });
+      }
+      if (
+        error.message?.includes('⛔') ||
+        error.message?.includes('LÍMITE') ||
+        error.message?.includes('deuda')
+      ) {
+        return res.status(400).json({
+          status: 'error',
+          message: error.message,
+        });
+      }
+      if (error.message?.includes('AGOTADO') || error.message?.includes('No existe un plan')) {
+        return res.status(409).json({
+          status: 'error',
+          message: error.message,
+        });
+      }
+      return res.status(500).json({
+        status: 'error',
+        message: error.message || 'Error interno al procesar la inscripción por meses adelantados.',
+      });
+    }
+  },
+
   inscribir: async (req, res) => {
     try {
       // req.body esperado: { "alumno_id": 16, "horario_ids": [1, 2] }

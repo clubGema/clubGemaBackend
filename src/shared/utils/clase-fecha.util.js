@@ -32,7 +32,7 @@ export const DIAS_VENTANA_INDIVIDUAL = 7;
  * Función auxiliar para calcular fechas DENTRO DE UN RANGO (Dinámico) 📅
  * Garantiza que la primera clase sea IGUAL o POSTERIOR a la fecha de inicio.
  */
-export const calcularProximasFechas = (fechaInicio, diaSemanaClase, esIndividual = false) => {
+export const calcularProximasFechas = (fechaInicio, diaSemanaClase, esIndividual = false, limitePersonalizado = null) => {
   const fechas = [];
   const fechaActual = new Date(fechaInicio);
   const diaSemanaNormalizado = diaSemanaClase === 7 ? 0 : Number(diaSemanaClase);
@@ -49,7 +49,9 @@ export const calcularProximasFechas = (fechaInicio, diaSemanaClase, esIndividual
   const diasHastaPrimeraClase = (diaSemanaNormalizado - fechaActual.getDay() + 7) % 7;
   fechaActual.setDate(fechaActual.getDate() + diasHastaPrimeraClase);
 
-  const limite = esIndividual ? 1 : 4;
+  const limite = Number.isInteger(limitePersonalizado) && limitePersonalizado > 0
+    ? limitePersonalizado
+    : (esIndividual ? 1 : 4);
   while (fechas.length < limite) {
     fechas.push(new Date(fechaActual));
     fechaActual.setDate(fechaActual.getDate() + 7);

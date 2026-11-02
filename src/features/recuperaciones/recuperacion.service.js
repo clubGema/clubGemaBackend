@@ -1,6 +1,58 @@
 import { prisma } from '../../config/database.config.js';
 import { ApiError } from '../../shared/utils/error.util.js';
 
+/**
+ * Cupo de recuperaciones de faltas normales por ciclo, según los días/semana
+ * (inscripciones ACTIVAS) del alumno:
+ *   1 día/semana   -> 1 recuperación
+ *   2 o 3 días     -> 2 recuperaciones
+ *   4 o más días   -> 4 recuperaciones
+ * Las de lesión (es_por_lesion) NO cuentan contra este cupo.
+ */
+export const limiteRecuperaciones = (cantidadInscripciones, meses = 1) => {
+  const n = Number(cantidadInscripciones) || 0;
+  const m = Math.max(1, Number(meses) || 1);
+  let cupoPorMes = 0;
+  if (n >= 4) cupoPorMes = 4;
+  else if (n >= 2) cupoPorMes = 2;
+  else if (n === 1) cupoPorMes = 1;
+  return cupoPorMes * m;
+};
+
+/**
+ * Calcula cuántos meses tiene pagados el paquete activo del alumno
+ * basándose en el total de clases regulares generadas (4 clases por mes por horario).
+ */
+export const calcularMesesPaquete = async (cliente, alumnoId, cantidadInscripciones) => {
+  const id = Number.parseInt(alumnoId);
+  const diasSemana = Number(cantidadInscripciones) || 1;
+  const totalClases = await cliente.registros_asistencia.count({
+    where: {
+      inscripciones: { alumno_id: id, estado: 'ACTIVO' },
+      NOT: { comentario: { contains: '[RECUPERACION]' } }
+    }
+  });
+  const clasesPorMes = diasSemana * 4;
+  return clasesPorMes > 0 ? Math.max(1, Math.round(totalClases / clasesPorMes)) : 1;
+};
+
+/**
+ * Fecha fin REAL del ciclo del alumno = fecha de su última clase regular
+ * generada (registros_asistencia), sin contar las filas [RECUPERACION].
+ * Es la fecha que rige hasta cuándo se puede recuperar (reemplaza los 30 días).
+ * Devuelve Date (@db.Date, 00:00 UTC) o null si el alumno no tiene clases.
+ */
+export const ultimaClaseRegular = async (cliente, alumnoId) => {
+  const registros = await cliente.registros_asistencia.findMany({
+    where: { inscripciones: { alumno_id: Number.parseInt(alumnoId) } },
+    select: { fecha: true, comentario: true },
+    orderBy: { fecha: 'desc' },
+    take: 60,
+  });
+  const regular = registros.find((r) => !r.comentario?.includes('[RECUPERACION]'));
+  return regular ? regular.fecha : null;
+};
+
 // Crear registro de recuperacion pendiente en caso sea marcado como FALTA.
 // faltaPendiente = Ticket de Recuperación
 const registrarFaltaPendiente = async (tx, alumnoId, fechaFalta, asistenciaId) => {
@@ -12,8 +64,8 @@ const registrarFaltaPendiente = async (tx, alumnoId, fechaFalta, asistenciaId) =
     },
   });
 
-  // Si tiene menos de 2 inscripciones, entonces no se crea una recuperacion pendiente.
-  if (cantidadInscripciones < 2) {
+  // Sin inscripciones activas no hay ciclo del cual recuperar.
+  if (cantidadInscripciones < 1) {
     return null; // Retornamos null para indicar que no se creó nada.
   }
 
@@ -80,8 +132,9 @@ const registrarFaltaPendiente = async (tx, alumnoId, fechaFalta, asistenciaId) =
     },
   });
 
-  // Definir su límite según su plan
-  const limitePermitido = cantidadInscripciones >= 4 ? 4 : 2;
+  // Definir su límite según su plan y meses pagados
+  const mesesPaquete = await calcularMesesPaquete(tx, alumnoId, cantidadInscripciones);
+  const limitePermitido = limiteRecuperaciones(cantidadInscripciones, mesesPaquete);
 
   // Si ya llegó al tope, abortamos la creación del ticket
   if (tickets >= limitePermitido) {
@@ -300,7 +353,8 @@ const obtenerPendientes = async (alumnoId) => {
     },
   });
 
-  const limitePermitido = cantidadInscripciones >= 4 ? 4 : 2;
+  const mesesPaquete = await calcularMesesPaquete(prisma, alumnoId, cantidadInscripciones);
+  const limitePermitido = limiteRecuperaciones(cantidadInscripciones, mesesPaquete);
 
   const recuperacionesUsadas = await prisma.recuperaciones.count({
     where: {
@@ -312,6 +366,7 @@ const obtenerPendientes = async (alumnoId) => {
   });
 
   // Inyectamos en cada ticket sin lesión la fecha límite
+  const fechaFinCiclo = await ultimaClaseRegular(prisma, alumnoId);
   const pendientesConFechaLimite = pendientes.map((ticket) => {
 
     if (ticket.es_por_lesion) {
@@ -321,12 +376,9 @@ const obtenerPendientes = async (alumnoId) => {
       };
     }
 
-    const fechaLimiteValida = new Date(ticket.fecha_falta);
-    fechaLimiteValida.setUTCDate(fechaLimiteValida.getUTCDate() + 30);
-
     return {
       ...ticket,
-      fecha_caducidad: fechaLimiteValida,
+      fecha_caducidad: fechaFinCiclo,
     };
   });
 
@@ -432,16 +484,16 @@ const validarElegibilidad = async (alumnoId, recuperacionId, fechaProgramada, ho
     return true;
   }
 
-  const fechaLimiteValida = new Date(faltaPendiente.fecha_falta);
-  fechaLimiteValida.setUTCDate(fechaLimiteValida.getUTCDate() + 30);
+  // La recuperación debe caer a más tardar el último día de clases del ciclo.
+  const fechaLimiteValida = await ultimaClaseRegular(prisma, alumnoId);
 
   // Traer fecha local y convertirla a string
   const fechaProgramadaTexto = fechaProgramadaDate.toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
   // Crear un date con ese string forzando la hora en UTC (Z = UTC  /  -05:00 = GMT-5)
   const fechaProgramadaLocal = new Date(`${fechaProgramadaTexto}T00:00:00Z`);
 
-  if (fechaProgramadaLocal > fechaLimiteValida) {
-    throw new ApiError('La vigencia para recuperar esta falta ha expirado o sobrepasa la fecha límite.', 400);
+  if (fechaLimiteValida && fechaProgramadaLocal > fechaLimiteValida) {
+    throw new ApiError('La recuperación debe realizarse a más tardar el último día de tus clases del ciclo.', 400);
   }
 
   // Si ya no cuenta con inscripciones activas, no es necesario que haya un límite, ya que no seguirá generando tickets.
@@ -462,11 +514,8 @@ const validarElegibilidad = async (alumnoId, recuperacionId, fechaProgramada, ho
     },
   });
 
-  let limitePermitido = 2;
-  // Cantidad de clases inscritas >= 4
-  if (inscripciones.length >= 4) {
-    limitePermitido = 4;
-  }
+  const mesesPaquete = await calcularMesesPaquete(prisma, alumnoId, inscripciones.length);
+  const limitePermitido = limiteRecuperaciones(inscripciones.length, mesesPaquete);
 
   if (recuperacionesRealizadas >= limitePermitido) {
     throw new ApiError(`Has alcanzado tu límite de ${limitePermitido} recuperaciones.`, 400);
@@ -603,7 +652,19 @@ const eliminarRecuperacionAdmin = async (recuperacionId) => {
       return { message: 'Depuración exacta completada.' };
 
     } else {
-      // Si no es lesión, simplemente borramos el registro
+      // Si era una falta anticipada, restauramos la clase original a PROGRAMADA
+      if (ticket.registro_asistencia_id && ticket.motivo_falta === 'FALTA_ANTICIPADA') {
+        const reg = await tx.registros_asistencia.findUnique({ where: { id: ticket.registro_asistencia_id } });
+        if (reg) {
+          await tx.registros_asistencia.update({
+            where: { id: reg.id },
+            data: {
+              estado: 'PROGRAMADA',
+              comentario: (reg.comentario || '').replace('[FALTA_ANTICIPADA]', '').trim(),
+            },
+          });
+        }
+      }
       return await tx.recuperaciones.delete({
         where: { id: ticket.id }
       });

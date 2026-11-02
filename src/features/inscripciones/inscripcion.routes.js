@@ -3,12 +3,27 @@ import { inscripcionController } from './inscripcion.controller.js';
 import { authorize } from '../../shared/middlewares/authorize.middleware.js';
 import { authenticate } from '../../shared/middlewares/auth.middleware.js';
 import { validate } from '../../shared/middlewares/validate.middleware.js';
-import { inscribirIndividualAdminSchema, renovarHistoricoSchema, ajusteFechaSchema } from './inscripcion.schema.js';
+import { inscribirIndividualAdminSchema, renovarHistoricoSchema, ajusteFechaSchema, inscribirMesesAdelantadosSchema } from './inscripcion.schema.js';
 
 const router = Router();
 
 // POST http://localhost:3000/api/inscripciones
 // ⚠️ CAMBIO AQUÍ: 'crearInscripcion' -> 'inscribir'
+// POST http://localhost:3000/api/inscripciones/meses-adelantados
+router.post(
+  '/meses-adelantados',
+  validate(inscribirMesesAdelantadosSchema),
+  inscripcionController.inscribirMesesAdelantados
+);
+
+// Alias: POST http://localhost:3000/api/inscripciones/adelantado
+router.post(
+  '/adelantado',
+  validate(inscribirMesesAdelantadosSchema),
+  inscripcionController.inscribirMesesAdelantados
+);
+
+// POST http://localhost:3000/api/inscripciones
 router.post('/', inscripcionController.inscribir);
 
 // GET http://localhost:3000/api/inscripciones
