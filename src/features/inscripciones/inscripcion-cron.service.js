@@ -142,7 +142,8 @@ class InscripcionCronService {
               id: 'desc'
             }
           });
-          const fechaFinCiclo = resultado.fecha_fin_ciclo;
+          // fix de zona horaria - Navegación segura opcional en fecha fin de ciclo para evitar crash si no hay link
+          const fechaFinCiclo = resultado?.fecha_fin_ciclo;
           if (!fechaFinCiclo) continue;
 
           if (hoyLima.isAfter(fechaFinCiclo, 'day')) {
