@@ -3,7 +3,6 @@ import { logger } from '../../shared/utils/logger.util.js';
 // 🎯 BL-005: misma aritmética de ciclo que usa la reprogramación masiva.
 import {
   cargarCiclosVigentes,
-  resolverCorrimientoDeCiclo,
   aplicarCorrimientoDeCiclo,
 } from '../../shared/utils/reprogramacion-ciclo.util.js';
 import dayjs from 'dayjs';
@@ -153,7 +152,6 @@ class AsistenciaCronService {
             // reaparecía por acá para cada inscrito tardío.
             // =================================================================
             const ciclos = await cargarCiclosVigentes(tx, [ins.id]);
-            const corrimiento = resolverCorrimientoDeCiclo(ciclos.get(ins.id), repro.fecha_origen);
 
             // 🔍 Verificar el registro de la clase origen
             const registroOrigen = await tx.registros_asistencia.findFirst({
@@ -190,10 +188,6 @@ class AsistenciaCronService {
             // C) Calcular siguiente día hábil de reposición
             const fechaReposicion = calcularSiguienteDia(ultimaClase.fecha, diasDelAlumno);
 
-            // D) Calcular desfase en días para extender la facturación
-            const diffMs = fechaReposicion.getTime() - new Date(ultimaClase.fecha).getTime();
-            const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-
             // E1) Marcar clase origen como REPROGRAMADA (solo si no tiene estado definitivo)
             if (registroOrigen) {
               await tx.registros_asistencia.update({
@@ -218,34 +212,9 @@ class AsistenciaCronService {
               },
             });
 
-            // 🎯 BL-005: si la clase movida era la PRIMERA del ciclo, el ciclo
-            // arranca en la siguiente clase real y el corte se recalcula desde
-            // ahí. EXCLUYENTE con el E3 de abajo: si corrieran los dos, el corte
-            // se movería dos veces (ver el mismo razonamiento en
-            // clase.service.js -> reprogramarMasivamente).
-            if (corrimiento?.eraPrimeraClase && corrimiento.dias) {
-              await aplicarCorrimientoDeCiclo(tx, {
-                link: ciclos.get(ins.id).link,
-                inscripcionId: ins.id,
-                dias: corrimiento.dias,
-              });
-
-              totalSincronizados++;
-              return;
-            }
-
-            // E3) Extender facturación usando Prisma (sin SQL raw)
-            const inscripcionActual = await tx.inscripciones.findUnique({
-              where: { id: ins.id },
-              select: { fecha_inscripcion: true },
-            });
-
-            const nuevaFechaInscripcion = new Date(inscripcionActual.fecha_inscripcion);
-            nuevaFechaInscripcion.setDate(nuevaFechaInscripcion.getDate() + diffDays);
-
-            await tx.inscripciones.update({
-              where: { id: ins.id },
-              data: { fecha_inscripcion: nuevaFechaInscripcion },
+            await aplicarCorrimientoDeCiclo(tx, {
+              link: ciclos.get(ins.id).link,
+              nuevoFin: fechaReposicion
             });
 
             totalSincronizados++;
@@ -255,7 +224,6 @@ class AsistenciaCronService {
             `[SINCRONIZADOR] Error procesando inscripcion_id=${ins.id} para repro_id=${repro.id}:`,
             error
           );
-          // Continuamos con el siguiente alumno aunque éste falle
         }
       }
     }

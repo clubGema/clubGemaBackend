@@ -30,15 +30,6 @@ export const claseController = {
     return apiResponse.success(res, { data: detalle });
   }),
 
-  revertirMasivo: catchAsync(async (req, res) => {
-    const { grupo_uuid } = req.body;
-    const resultado = await claseService.revertirReprogramacionMasiva(grupo_uuid);
-    return apiResponse.success(res, {
-      message: 'Reprogramación masiva revertida exitosamente',
-      data: resultado,
-    });
-  }),
-
   obtenerMasivasActivas: catchAsync(async (req, res) => {
     const list = await claseService.obtenerMasivasActivas();
     return apiResponse.success(res, { data: list });
@@ -55,8 +46,8 @@ export const claseController = {
     return apiResponse.success(res, { data: horarios });
   }),
   obtenerFechasPasadas: catchAsync(async (req, res) => {
-  const { horario_id } = req.params;
-  const fechas = await claseService.obtenerFechasPasadas(horario_id);
-  return apiResponse.success(res, { data: fechas });
-}),
+    const { horario_id } = req.params;
+    const fechas = await claseService.obtenerFechasPasadas(horario_id);
+    return apiResponse.success(res, { data: fechas });
+  }),
 };

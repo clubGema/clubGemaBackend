@@ -21,7 +21,6 @@ import {
   diasEntreUTC,
   etiquetaMes,
   parsearMesAnio,
-  sumarDiasUTC,
   rangoMesUTC,
 } from '../../shared/utils/ciclo.util.js';
 // 🎯 BL-001 / BL-003
@@ -677,20 +676,6 @@ export const inscripcionService = {
               actualizado_en: new Date()
             }
           });
-
-          const ultimoLinkCerrado = await tx.inscripciones_deudas_link.findFirst({
-            where: {
-              inscripcion_id: idIns,
-            },
-            orderBy: { id: 'desc' }
-          });
-
-          if (ultimoLinkCerrado) {
-            await tx.inscripciones_deudas_link.update({
-              where: { id: ultimoLinkCerrado.id },
-              data: { fecha_fin_ciclo: diaLimaAFechaUTC() }
-            });
-          }
         }
       }
 

@@ -441,7 +441,7 @@ class InscripcionCronService {
   }
 
   // =================================================================
-  // 📧📲 RECORDATORIO: 22 Días (Pagos Parciales) - Email + WhatsApp
+  // 📧📲 RECORDATORIO: 14 Días (Pagos Parciales) - Email + WhatsApp
   // =================================================================
   async alertaMorososParcialesIndividual() {
     const hoyLimaInicioDia = dayjs().tz(TZ_LIMA).startOf('day');
@@ -467,7 +467,7 @@ class InscripcionCronService {
 
     const enviosPendientes = [];
 
-    // 2. Filtramos cuáles realmente cumplen 22 días HOY
+    // 2. Filtramos cuáles realmente cumplen 14 días HOY
     for (const enlace of enlacesDeuda) {
       const inscripcion = enlace.inscripciones;
       const cuenta = enlace.cuentas_por_cobrar;
@@ -475,27 +475,21 @@ class InscripcionCronService {
 
       if (!inscripcion || !usuario || !usuario.telefono_personal) continue;
 
-      // 🚩 BL-001: el aviso de 22 días es de ciclo mensual. Una clase suelta no
-      // tiene día 22, así que se descarta (antes recibía el WhatsApp igual).
+      // 🚩 BL-001: el aviso de 14 días es de ciclo mensual. Una clase suelta no
+      // tiene día 14, así que se descarta (antes recibía el WhatsApp igual).
       if (esIndividual(inscripcion)) continue;
 
-      // Calculamos el día 22 de ESTA inscripción en específico
-      const diaAviso22 = dayjs(inscripcion.fecha_inscripcion)
+      // Calculamos el día 14 de ESTA inscripción en específico
+      const diaAviso14 = dayjs(inscripcion.fecha_inscripcion)
         .tz(TZ_LIMA)
-        .add(22, 'day')
+        .add(14, 'day')
         .startOf('day');
 
-      if (hoyLimaInicioDia.valueOf() === diaAviso22.valueOf()) {
+      if (hoyLimaInicioDia.valueOf() === diaAviso14.valueOf()) {
 
-        // Calculamos la fecha de corte (Ej: Si se inscribió el 5 de Mayo, vence el 5 de Junio)
-        // Formato: "05 de junio"
-        const fechaCorte = dayjs(inscripcion.fecha_inscripcion)
+        const fechaCorte = dayjs(enlace.fecha_fin_ciclo)
           .tz(TZ_LIMA)
-          .add(29, 'day')
           .format('DD [de] MMMM');
-
-        // Alternativa: Si prefieres usar la fecha de vencimiento real de la cuenta por cobrar:
-        // const fechaCorte = dayjs(cuenta.fecha_vencimiento).tz(TZ_LIMA).format('DD [de] MMMM');
 
         enviosPendientes.push({
           telefono: usuario.telefono_personal,
@@ -508,7 +502,7 @@ class InscripcionCronService {
     }
 
     if (enviosPendientes.length === 0) {
-      logger.info('[CRON] No hay morosos parciales cumpliendo 22 días hoy.');
+      logger.info('[CRON] No hay morosos parciales cumpliendo 14 días hoy.');
       return;
     }
 
@@ -543,7 +537,7 @@ class InscripcionCronService {
 
 
   // =================================================================
-  // 📲 ALERTA VENCIMIENTO INMINENTE: Día 29 de su ciclo (1 día antes)
+  // 📲 ALERTA VENCIMIENTO INMINENTE: 1 día antes
   // =================================================================
   async alertaVencimientoInminenteWhatsApp() {
     const hoyLimaInicioDia = dayjs().tz(TZ_LIMA).startOf('day');
@@ -569,26 +563,31 @@ class InscripcionCronService {
 
     const enviosPendientes = [];
 
-    // 2. Filtramos cuáles cumplen exactamente 29 días HOY
+    // 2. Filtramos cuáles cumplen exactamente 1 dia antes
     for (const inscripcion of inscripcionesActivas) {
       const usuario = inscripcion.alumnos?.usuarios;
 
       // Validamos que exista el usuario y tenga teléfono
       if (!usuario || !usuario.telefono_personal) continue;
 
-      // Calculamos el día 29 desde su fecha de inscripción
-      const diaAviso29 = dayjs(inscripcion.fecha_inscripcion)
+      const link = await prisma.inscripciones_deudas_link.findFirst({
+        where: {
+          inscripcion_id: inscripcion.id
+        },
+        orderBy: { id: 'desc' }
+      })
+      const fechaFinCiclo = link.fecha_fin_ciclo;
+
+      const diaAviso = dayjs(fechaFinCiclo)
         .tz(TZ_LIMA)
-        .add(29, 'day')
+        .subtract(1, 'day')
         .startOf('day');
 
-      if (hoyLimaInicioDia.valueOf() === diaAviso29.valueOf()) {
+      if (hoyLimaInicioDia.valueOf() === diaAviso.valueOf()) {
 
-        // Calculamos la fecha de corte (Día 30, su fecha exacta de renovación)
-        // Formato: "15 de julio"
-        const fechaCorte = dayjs(inscripcion.fecha_inscripcion)
+        const fechaCorte = dayjs(fechaFinCiclo)
           .tz(TZ_LIMA)
-          .add(29, 'day')
+          .subtract(1, 'day')
           .format('DD [de] MMMM');
 
         enviosPendientes.push({
@@ -602,7 +601,7 @@ class InscripcionCronService {
     }
 
     if (enviosPendientes.length === 0) {
-      logger.info('[CRON] No hay inscripciones activas cumpliendo 29 días hoy.');
+      logger.info('[CRON] No hay inscripciones activas que esten a un día de finalizar.');
       return;
     }
 

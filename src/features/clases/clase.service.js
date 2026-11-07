@@ -6,9 +6,7 @@ import { formatFechaEs } from '../../shared/utils/date.util.js';
 // sincroniza a los inscritos tardíos.
 import {
   cargarCiclosVigentes,
-  resolverCorrimientoDeCiclo,
   aplicarCorrimientoDeCiclo,
-  resolverReversionDeCiclo,
 } from '../../shared/utils/reprogramacion-ciclo.util.js';
 
 // ============================================================================
@@ -126,12 +124,6 @@ export const claseService = {
         // pierde. Son DOS consultas para todo el lote, no N+1.
         // =================================================================
         const ciclos = await cargarCiclosVigentes(tx, inscripcionIds);
-        const corrimientos = new Map(
-          inscripcionesGrupo.map((ins) => [
-            ins.id,
-            resolverCorrimientoDeCiclo(ciclos.get(ins.id), fechaOrigenDate),
-          ])
-        );
         let ciclosAjustados = 0;
 
         await tx.registros_asistencia.updateMany({
@@ -170,84 +162,17 @@ export const claseService = {
             },
           });
 
-          // =================================================================
-          // 🎯 BL-005: si la clase movida era la PRIMERA del ciclo, el ciclo
-          // arranca ahora en la siguiente clase real del alumno.
-          //
-          // ⚠️ Esta rama es EXCLUYENTE con el bloque de fecha_inscripcion de
-          // más abajo. Si corrieran las dos, el corte se movería dos veces: ese
-          // bloque extiende la facturación para cubrir la reposición
-          // (≈ fin_anterior + 7) y nuevo_inicio + 30 da EXACTAMENTE el mismo
-          // cierre. Por eso acá se notifica y se hace `continue`.
-          //
-          // 🚩 Corrige POR INSCRIPCIÓN y no por id_grupo_transaccion: el cron
-          // VERDUGO también cierra por inscripción (fecha_inscripcion + 30 y su
-          // propio link, inscripcion-cron.service.js:133-164), y la hermana del
-          // paquete que entrena otro día NO perdió su primera clase, así que su
-          // ciclo no tiene por qué moverse.
-          // =================================================================
-          const corrimiento = corrimientos.get(ins.id);
-          if (corrimiento?.eraPrimeraClase && corrimiento.dias) {
-            await aplicarCorrimientoDeCiclo(tx, {
-              link: ciclos.get(ins.id).link,
-              inscripcionId: ins.id,
-              dias: corrimiento.dias,
-            });
-            ciclosAjustados += 1;
-
-            await tx.notificaciones.create({
-              data: {
-                alumno_id: ins.alumno_id,
-                titulo: '🚨 Clase Reprogramada',
-                mensaje: `Tu sesión del ${dateOrigenStr} se movió al ${dateReposicionStr}. Tu ciclo ahora inicia el ${formatFechaEs(corrimiento.siguienteClase)} y tu fecha de corte se ajustó igual.`,
-                tipo: 'ALERTA',
-                categoria: 'CLASES',
-              },
-            });
-            continue;
-          }
-
-          if (!ins.id_grupo_transaccion) {
-            await tx.notificaciones.create({
-              data: {
-                alumno_id: ins.alumno_id,
-                titulo: '🚨 Clase Reprogramada',
-                mensaje: `Tu sesión del ${dateOrigenStr} se movió al ${dateReposicionStr}.`,
-                tipo: 'ALERTA',
-                categoria: 'CLASES',
-              },
-            });
-            continue;
-          }
-
-          const fechaCorte = new Date(ins.fecha_inscripcion);
-          fechaCorte.setUTCDate(fechaCorte.getUTCDate() + 29);
-
-          const inicioStr = fechaCorte.toISOString().split('T')[0];
-          const finStr = fechaReposicion.toISOString().split('T')[0];
-
-          const inicio = new Date(inicioStr);
-          const fin = new Date(finStr);
-          const diffDays = Math.round((fin - inicio) / (1000 * 60 * 60 * 24));
-
-          const inscripcionActual = await tx.inscripciones.findUnique({
-            where: { id: ins.id },
-            select: { fecha_inscripcion: true },
+          await aplicarCorrimientoDeCiclo(tx, {
+            link: ciclos.get(ins.id).link,
+            nuevoFin: fechaReposicion,
           });
-
-          const nuevaFechaInscripcion = new Date(inscripcionActual.fecha_inscripcion);
-          nuevaFechaInscripcion.setDate(nuevaFechaInscripcion.getDate() + diffDays);
-
-          await tx.inscripciones.updateMany({
-            where: { id_grupo_transaccion: ins.id_grupo_transaccion },
-            data: { fecha_inscripcion: nuevaFechaInscripcion },
-          });
+          ciclosAjustados += 1;
 
           await tx.notificaciones.create({
             data: {
               alumno_id: ins.alumno_id,
               titulo: '🚨 Clase Reprogramada',
-              mensaje: `Tu sesión del ${dateOrigenStr} se movió al ${dateReposicionStr}, al igual que tu fecha de corte.`,
+              mensaje: `Tu sesión del ${dateOrigenStr} se movió al ${dateReposicionStr} al igual que la fecha de corte.`,
               tipo: 'ALERTA',
               categoria: 'CLASES',
             },
@@ -270,147 +195,6 @@ export const claseService = {
         timeout: 60000,
       }
     );
-  },
-
-  /**
-   * Revierte una reprogramación masiva previa utilizando el grupo_uuid
-   */
-  revertirReprogramacionMasiva: async (grupo_uuid) => {
-    return await prisma.$transaction(async (tx) => {
-      // 1. Buscar la reprogramación masiva
-      const reprogramaciones = await tx.reprogramaciones_clases.findMany({
-        where: { grupo_uuid: grupo_uuid, estado: 'ACTIVO' },
-      });
-
-      if (!reprogramaciones || reprogramaciones.length === 0) {
-        throw new ApiError(
-          'No se encontró una reprogramación masiva activa con ese identificador.',
-          404
-        );
-      }
-
-      const reprogramacionesIds = reprogramaciones.map((r) => r.id);
-
-      // 2. Buscar todas las asistencias afectadas
-      const asistencias = await tx.registros_asistencia.findMany({
-        where: { reprogramacion_clase_id: { in: reprogramacionesIds } },
-      });
-
-      if (asistencias.length === 0) {
-        throw new ApiError(
-          'No se encontraron registros de asistencia asociados a esta reprogramación.',
-          404
-        );
-      }
-
-      // 3. Reversión de la asistencia y facturación
-      const asistenciasNuevas = await tx.registros_asistencia.findMany({
-        where: {
-          reprogramacion_clase_id: { in: reprogramacionesIds },
-          fecha_original: { not: null },
-        },
-      });
-
-      // =================================================================
-      // 🎯 BL-005: estado de los ciclos ANTES de restaurar nada.
-      //
-      // Se excluyen las reposiciones de esta reprogramación para que
-      // `clases[0]` sea la clase que pasó a ser primera cuando se aplicó el
-      // corrimiento. La clase origen ya está en 'REPROGRAMADO', que
-      // ESTADOS_CLASE_VIGENTE no cuenta.
-      // =================================================================
-      const ciclosReversion = await cargarCiclosVigentes(
-        tx,
-        asistenciasNuevas.map((an) => an.inscripcion_id),
-        { excluirReprogramacionIds: reprogramacionesIds }
-      );
-
-      for (const an of asistenciasNuevas) {
-        // Encontramos la clase que quedó como REPROGRAMADA para calcular el desfase original
-        const claseOriginal = await tx.registros_asistencia.findFirst({
-          where: {
-            inscripcion_id: an.inscripcion_id,
-            reprogramacion_clase_id: { in: reprogramacionesIds },
-            estado: 'REPROGRAMADO',
-          },
-          orderBy: { fecha: 'desc' },
-        });
-
-        // Si no la encontramos por estado (quizás ya se movió), buscamos la inmediata anterior
-        const refFecha = claseOriginal ? claseOriginal.fecha : an.fecha_original;
-
-        // =================================================================
-        // 🎯 BL-005: si la ida corrió el ciclo, la vuelta lo devuelve con el
-        // MISMO delta en negativo — y entonces NO se ejecuta la reversión de
-        // fecha_inscripcion de más abajo, porque la ida tampoco la ejecutó.
-        // Las dos ramas son excluyentes en los dos sentidos.
-        // =================================================================
-        const cicloRev = ciclosReversion.get(an.inscripcion_id);
-        const reversion = resolverReversionDeCiclo(cicloRev, an.fecha_original);
-
-        if (reversion.debeRevertir) {
-          await aplicarCorrimientoDeCiclo(tx, {
-            link: cicloRev.link,
-            inscripcionId: an.inscripcion_id,
-            dias: -reversion.dias,
-          });
-          continue;
-        }
-
-        if (refFecha) {
-          const diffMs = an.fecha.getTime() - refFecha.getTime();
-          const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
-
-          // Reversión de facturación usando lógica nativa de Prisma
-          const inscripcionActual = await tx.inscripciones.findUnique({
-            where: { id: an.inscripcion_id },
-            select: { fecha_inscripcion: true },
-          });
-
-          const nuevaFechaInscripcion = new Date(inscripcionActual.fecha_inscripcion);
-          nuevaFechaInscripcion.setDate(nuevaFechaInscripcion.getDate() - diffDays);
-
-          await tx.inscripciones.update({
-            where: { id: an.inscripcion_id },
-            data: { fecha_inscripcion: nuevaFechaInscripcion },
-          });
-        }
-      }
-
-      // A) Borramos los registros "NUEVOS" creados en la fecha destino
-      await tx.registros_asistencia.deleteMany({
-        where: {
-          reprogramacion_clase_id: { in: reprogramacionesIds },
-          fecha_original: { not: null },
-        },
-      });
-
-      // B) Restauramos los registros originales
-      await tx.registros_asistencia.updateMany({
-        where: { reprogramacion_clase_id: { in: reprogramacionesIds }, estado: 'REPROGRAMADO' },
-        data: {
-          estado: 'PENDIENTE',
-          reprogramacion_clase_id: null,
-          comentario: null,
-          fecha_original: null,
-        },
-      });
-
-      // 4. Marcar reprogramación como REVERTIDO
-      await tx.reprogramaciones_clases.updateMany({
-        where: { id: { in: reprogramacionesIds } },
-        data: { estado: 'REVERTIDO' },
-      });
-
-      return { mensaje: 'Reprogramación revertida exitosamente.' };
-    },
-    {
-      // 🎯 BL-005: esta transacción ya hacía N+1 por alumno con el default de
-      // 5 s y ahora además deshace el ciclo. Se alinea con el timeout de
-      // reprogramarMasivamente para que un lote grande no muera por P2028 a
-      // mitad de la reversión.
-      timeout: 60000,
-    });
   },
 
   /**

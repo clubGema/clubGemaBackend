@@ -33,7 +33,4 @@ export const claseSchema = {
       .transform(Number)
       .refine((val) => val > 0, 'El ID del horario debe ser mayor a 0'),
   }),
-  revertirMasivoSchema: z.object({
-    grupo_uuid: z.string().uuid('Debe proporcionar un UUID válido para revertir'),
-  }),
 };

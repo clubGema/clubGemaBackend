@@ -125,126 +125,13 @@ export const cargarCiclosVigentes = async (tx, inscripcionIds, opciones = {}) =>
   return ciclos;
 };
 
-/**
- * ¿La fecha que se está moviendo era la PRIMERA clase del ciclo? Y si lo era,
- * cuántos días hay que correr el ciclo.
- *
- * Puro y sincrónico. `dias` sale de la SIGUIENTE clase real que le queda al
- * alumno (decisión de negocio de BL-005), no de la fecha de reposición: la
- * reposición va al FINAL del ciclo, así que usarla dejaría el inicio después de
- * todas las demás clases.
- *
- * ⚠️ Se desplaza por DELTA y no a un valor absoluto, para preservar el offset
- * inicio-de-ciclo → primera-clase que introdujo BL-006 (el admin puede abrir el
- * ciclo un lunes con la primera clase el martes).
- *
- * @param {{link: object, clases: object[]}|undefined} ciclo de `cargarCiclosVigentes`
- * @param {Date|string} fechaMovida fecha de la clase que se mueve
- * @returns {{eraPrimeraClase: boolean, siguienteClase: Date|null, dias: number|null}}
- */
-export const resolverCorrimientoDeCiclo = (ciclo, fechaMovida) => {
-  const nulo = { eraPrimeraClase: false, siguienteClase: null, dias: null };
-
-  const claveMovida = claveDiaDesdeFecha(fechaMovida);
-  if (!ciclo || !claveMovida || ciclo.clases.length === 0) return nulo;
-
-  if (claveDiaDesdeFecha(ciclo.clases[0].fecha) !== claveMovida) return nulo;
-
-  const siguiente = ciclo.clases.find((c) => claveDiaDesdeFecha(c.fecha) !== claveMovida);
-
-  // Era la primera, pero no queda ninguna otra clase en el ciclo (caso raro: un
-  // ciclo de una sola sesión). Sin fecha destino no hay corrimiento que aplicar;
-  // el llamador conserva su comportamiento de siempre.
-  if (!siguiente) return { eraPrimeraClase: true, siguienteClase: null, dias: null };
-
-  return {
-    eraPrimeraClase: true,
-    siguienteClase: siguiente.fecha,
-    dias: diasEntreUTC(fechaMovida, siguiente.fecha),
-  };
-};
-
-/**
- * 🔁 BL-005: ¿hay que DESHACER un corrimiento al revertir la reprogramación?
- *
- * Discriminador: si el ciclo arranca DESPUÉS de la fecha que se había movido,
- * es porque `aplicarCorrimientoDeCiclo` lo corrió por encima de ella. Cuando la
- * clase movida no era la primera, `fecha_inicio_ciclo` sigue siendo <= esa
- * fecha y acá no se toca nada.
- *
- * No hace falta persistir el delta en ninguna columna nueva: se recalcula igual
- * que en la ida (fecha movida → primera clase que quedó) con el `ciclo` cargado
- * EXCLUYENDO la reposición de esa reprogramación.
- *
- * ⚠️ Caso borde conocido: si la clase que pasó a ser primera se canceló después
- * (feriado → `CANCELADO`), `clases[0]` será una posterior y el delta saldrá más
- * grande que el aplicado. Se acepta: es preferible a inventar una columna para
- * un escenario que requiere reprogramar, cancelar por feriado y revertir, en
- * ese orden.
- *
- * @param {{link: object, clases: object[]}|undefined} ciclo
- * @param {Date|string} fechaMovida la `fecha_original` de la reposición
- * @returns {{debeRevertir: boolean, dias: number|null}}
- */
-export const resolverReversionDeCiclo = (ciclo, fechaMovida) => {
-  const nulo = { debeRevertir: false, dias: null };
-
-  if (!ciclo?.link?.fecha_inicio_ciclo || ciclo.clases.length === 0) return nulo;
-
-  const movida = aFechaUTC(fechaMovida);
-  const inicio = aFechaUTC(ciclo.link.fecha_inicio_ciclo);
-  if (!movida || !inicio) return nulo;
-
-  // El ciclo NO fue corrido por encima de esta fecha.
-  if (movida >= inicio) return nulo;
-
-  const dias = diasEntreUTC(movida, ciclo.clases[0].fecha);
-  if (!Number.isInteger(dias) || dias <= 0) return nulo;
-
-  return { debeRevertir: true, dias };
-};
-
-/**
- * Aplica el corrimiento: mueve `fecha_inicio_ciclo` del link y
- * `fecha_inscripcion` de la inscripción los mismos días.
- *
- * `dias` negativo revierte (lo usa `revertirReprogramacionMasiva`), así que ida
- * y vuelta son la misma operación con signo opuesto.
- *
- * 🚩 NO escribe `fecha_fin_ciclo` (ver la cabecera de este archivo).
- * 🚩 NO toca `fecha_inscripcion_original`: es el ancla pristina que
- * `updateInscripcion` usa para deshacer justamente estos corrimientos
- * (inscripcion.service.js:861).
- *
- * @returns {Promise<boolean>} true si escribió algo
- */
-export const aplicarCorrimientoDeCiclo = async (tx, { link, inscripcionId, dias }) => {
-  if (!link?.id || !link.fecha_inicio_ciclo) return false;
-  if (!Number.isInteger(dias) || dias === 0) return false;
-
-  const nuevoInicio = sumarDiasUTC(aFechaUTC(link.fecha_inicio_ciclo), dias);
+export const aplicarCorrimientoDeCiclo = async (tx, { link, nuevoFin }) => {
+  if (!link?.id || !nuevoFin) return false;
 
   await tx.inscripciones_deudas_link.update({
     where: { id: link.id },
-    data: { fecha_inicio_ciclo: nuevoInicio },
+    data: { fecha_fin_ciclo: nuevoFin },
   });
-
-  const inscripcion = await tx.inscripciones.findUnique({
-    where: { id: inscripcionId },
-    select: { fecha_inscripcion: true },
-  });
-
-  if (inscripcion?.fecha_inscripcion) {
-    // sumarDiasUTC y no setDate local: suma exactamente N días conservando la
-    // hora UTC del timestamp (el ancla a mediodía de Lima sobrevive intacta).
-    await tx.inscripciones.update({
-      where: { id: inscripcionId },
-      data: {
-        fecha_inscripcion: sumarDiasUTC(inscripcion.fecha_inscripcion, dias),
-        actualizado_en: new Date(),
-      },
-    });
-  }
 
   return true;
 };

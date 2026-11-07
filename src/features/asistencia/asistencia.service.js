@@ -8,7 +8,6 @@ import dayjs from 'dayjs';
 // fecha), así que se movió a shared/utils/clase-fecha.util.js tal cual, sin
 // duplicarla. Ver la cabecera de ese archivo: NO reescribir su aritmética a UTC.
 import {
-  DIAS_VENTANA_INDIVIDUAL,
   calcularFechasPorConteo,
   calcularProximasFechas,
   siguienteOcurrenciaSemanal,
@@ -108,10 +107,6 @@ export const lanzarSiHayChoques = (choques, inscripcionId) => {
 };
 
 export const asistenciaService = {
-  /**
-   * Genera masivamente las clases futuras respetando el CICLO DE 30 DÍAS.
-   * Ahora prioriza el parámetro 'fecha_inicio' para evitar solapamientos.
-   */
   generarClasesFuturas: async (tx, params) => {
     // 🔥 Desestructuramos incluyendo el nuevo parámetro fecha_inicio
     const { inscripcion_id, dia_semana, usuario_admin_id, coordinador_id, fecha_inicio, cantidad } = params;

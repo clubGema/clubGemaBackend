@@ -80,16 +80,6 @@ class ClaseCronService {
                         }
                     });
 
-                    // Calculamos cuántos días le estamos "recortando" a su espera
-                    const diffMs = nuevaFechaReposicion.getTime() - reposicion.fecha.getTime();
-                    const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-
-                    await tx.$executeRawUnsafe(`
-                        UPDATE inscripciones 
-                        SET fecha_inscripcion = fecha_inscripcion + INTERVAL '${diffDays} days'
-                        WHERE id = ${reposicion.inscripcion_id}
-                    `);
-
                     await tx.notificaciones.create({
                         data: {
                             alumno_id: alumnoId,
