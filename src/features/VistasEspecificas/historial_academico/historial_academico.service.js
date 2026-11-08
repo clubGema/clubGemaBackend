@@ -312,9 +312,8 @@ export const historialAcademicoService = {
         const niveles = [...new Set(
           paraEtiquetas.map((i) => i.horarios_clases?.niveles_entrenamiento?.nombre).filter(Boolean)
         )];
-
         const ultimaInsc = inscripcionesAMostrar[0];
-        const fechaCorte = ultimaInsc?.inscripciones_deudas_link[0].fecha_fin_ciclo;
+        const fechaCorte = ultimaInsc?.inscripciones_deudas_link?.[0]?.fecha_fin_ciclo;
 
         return {
           id: user.id,

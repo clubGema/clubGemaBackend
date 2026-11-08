@@ -1636,9 +1636,9 @@ async function filaSinCuenta(inscripcion) {
       id: 'desc'
     }
   });
-  const fin = aFechaUTC(inscReciente.fecha_fin_ciclo);
+  const fin = aFechaUTC(inscReciente?.fecha_fin_ciclo);
 
-  const corte = aFechaUTC(inscReciente.fecha_fin_ciclo);
+  const corte = aFechaUTC(inscReciente?.fecha_fin_ciclo);
 
   return {
     ...datosInscripcion(inscripcion),
