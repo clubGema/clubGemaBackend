@@ -470,65 +470,6 @@ export const pagosService = {
     });
   },
 
-  // =====================================================================
-  // ⚡ NUEVO: VENTA EXPRESS (Taquilla para Clases Sueltas)
-  // =====================================================================
-  registrarVentaExpress: async (data, adminId) => {
-    const {
-      alumno_id,
-      monto,
-      metodo_pago_id,
-      nombre_visitante,
-      telefono,
-      horario_texto
-    } = data;
-
-    return await prisma.$transaction(async (tx) => {
-      // 1. Crear una deuda "Fantasma" que ya nace pagada
-      const nuevaDeuda = await tx.cuentas_por_cobrar.create({
-        data: {
-          alumno_id: parseInt(alumno_id),
-          // Guardamos los datos de la visita en el detalle
-          detalle_adicional: `Pase Invitado: ${nombre_visitante} | Cel: ${telefono || 'N/A'} | Clase: ${horario_texto}`,
-          monto_final: parseFloat(monto),
-          fecha_vencimiento: new Date(),
-          estado: 'PAGADA'
-        }
-      });
-
-      // 2. Registrar el pago ya aprobado por el Admin
-      const nuevoPago = await tx.pagos.create({
-        data: {
-          cuenta_id: nuevaDeuda.id,
-          metodo_pago_id: parseInt(metodo_pago_id),
-          monto_pagado: parseFloat(monto),
-          codigo_operacion: `VISITA-${Date.now().toString().slice(-6)}`,
-          estado_validacion: 'APROBADO',
-          revisado_por: parseInt(adminId), // Eddy aprueba su propia venta
-          notas_validacion: 'Venta rápida en Taquilla'
-        }
-      });
-
-      // 3. Notificar al sistema para auditoría
-      await tx.notificaciones.create({
-        data: {
-          usuario_id: parseInt(adminId),
-          titulo: '🎟️ Pase Generado',
-          mensaje: `Se vendió una clase suelta a ${nombre_visitante} por S/ ${monto}.`,
-          tipo: 'SUCCESS',
-          categoria: 'VENTAS'
-        }
-      });
-
-      return {
-        success: true,
-        mensaje: `Pase registrado para ${nombre_visitante}`,
-        deuda: nuevaDeuda,
-        pago: nuevoPago
-      };
-    });
-  },
-
   // 4. OBTENER PAGO POR ID
   obtenerPorId: async (id) => {
     const pago = await prisma.pagos.findUnique({

@@ -231,6 +231,12 @@ export const historialAcademicoService = {
                   estado: true,
                   fecha_inscripcion: true,
                   tipo_inscripcion: true,
+                  inscripciones_deudas_link: {
+                    select: { fecha_fin_ciclo: true },
+                    orderBy: {
+                      id: 'desc'
+                    },
+                  },
                   horarios_clases: {
                     select: {
                       niveles_entrenamiento: { select: { nombre: true } },
@@ -273,7 +279,7 @@ export const historialAcademicoService = {
         // --- Misma prioridad que antes: vigentes > activas-vencidas > última ---
         const inscripcionesActivas = inscripcionesDeSede.filter((i) => i.estado === 'ACTIVO');
         const inscripcionesConCorte = inscripcionesActivas.map((i) => {
-          const fechaCorte = calcularFechaCorte(i.fecha_inscripcion);
+          const fechaCorte = i.inscripciones_deudas_link[0].fecha_fin_ciclo;
           return { ...i, __fechaCorte: fechaCorte, __vencida: estaVencida(fechaCorte) };
         });
         const inscripcionesVigentes = inscripcionesConCorte.filter((i) => !i.__vencida);
@@ -308,7 +314,7 @@ export const historialAcademicoService = {
         )];
 
         const ultimaInsc = inscripcionesAMostrar[0];
-        const fechaCorte = ultimaInsc?.fecha_inscripcion ? calcularFechaCorte(ultimaInsc.fecha_inscripcion) : null;
+        const fechaCorte = ultimaInsc?.inscripciones_deudas_link[0].fecha_fin_ciclo;
 
         return {
           id: user.id,

@@ -518,10 +518,14 @@ const validarElegibilidad = async (alumnoId, recuperacionId, fechaProgramada, ho
 
   // fix de zona horaria - Comparación de fecha fin de ciclo usando cadenas planas YYYY-MM-DD
   const fechaLimiteValida = await ultimaClaseRegular(prisma, alumnoId);
-  if (fechaLimiteValida && diaProgramadoKey > claveDia(fechaLimiteValida)) {
-    throw new ApiError('La recuperación debe realizarse a más tardar el último día de tus clases del ciclo.', 400);
+  if (fechaLimiteValida) {
+    const fechaLimite = claveDia(fechaLimiteValida)
+    const fechaLimiteTolerancia = new Date(fechaLimite)
+    fechaLimiteTolerancia.setUTCDate(fechaLimiteTolerancia.getUTCDate() + 30)
+    if (diaProgramadoKey > fechaLimiteTolerancia) {
+      throw new ApiError('La recuperación debe realizarse a más tardar el último día de tus clases del ciclo.', 400);
+    }
   }
-
   // Si ya no cuenta con inscripciones activas, no es necesario que haya un límite, ya que no seguirá generando tickets.
   if (inscripciones.length === 0) return true;
 

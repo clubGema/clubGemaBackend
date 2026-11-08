@@ -47,9 +47,6 @@ router.get(
   pagosController.obtenerPagosPorAlumno
 );
 
-// Taquilla: la registra un Administrador (el adminId sale del token).
-router.post('/venta-express', authorize('Administrador'), pagosController.registrarVentaExpress);
-
 // POST http://localhost:3000/api/pagos/reportar
 // Ahora acepta tanto datos JSON como archivo de imagen. El ownership va DESPUÉS de multer
 // porque `deuda_id` llega en el body multipart.

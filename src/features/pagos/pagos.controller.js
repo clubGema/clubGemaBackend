@@ -31,21 +31,6 @@ export const pagosController = {
       });
     }
   },
-  // =================================================================
-  // 🎟️ NUEVO: VENTA EXPRESS (Taquilla)
-  // =================================================================
-  registrarVentaExpress: catchAsync(async (req, res) => {
-    // El admin sale SIEMPRE del token (la ruta exige authenticate + Administrador): un id
-    // enviado en el body ya no se acepta, así nadie puede registrar ventas a nombre de otro.
-    const adminId = req.user.id;
-
-    const resultado = await pagosService.registrarVentaExpress(req.body, adminId);
-
-    return apiResponse.success(res, {
-      message: resultado.mensaje,
-      data: resultado,
-    });
-  }),
 
   // 2. VALIDAR PAGO (Actualizado con "La Verdad del Admin" 👮‍♂️)
   validarPagoAdmin: async (req, res) => {
@@ -150,16 +135,16 @@ export const pagosController = {
     try {
       // Llamada al nuevo método del service
       const pagos = await pagosService.obtenerTodosParaAdmin();
-      
-      res.status(200).json({ 
-        status: 'success', 
-        data: pagos 
+
+      res.status(200).json({
+        status: 'success',
+        data: pagos
       });
     } catch (error) {
       console.error('❌ [ERROR LISTAR PAGOS ADMIN]:', error.message);
-      res.status(500).json({ 
-        status: 'error', 
-        message: 'Error al recuperar el listado administrativo.' 
+      res.status(500).json({
+        status: 'error',
+        message: 'Error al recuperar el listado administrativo.'
       });
     }
   },
@@ -177,7 +162,7 @@ export const pagosController = {
     try {
       const { id } = req.params;
       const detalle = await pagosService.obtenerDetalleCompleto(id);
-      
+
       res.status(200).json({
         status: 'success',
         data: detalle
