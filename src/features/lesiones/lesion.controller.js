@@ -6,16 +6,22 @@ import { ApiError } from '../../shared/utils/error.util.js';
 // ALUMNO: Crear nueva solicitud
 const crearSolicitud = catchAsync(async (req, res) => {
     const { id: alumnoId } = req.user;
-    const { descripcion } = req.body;
+    const { descripcion, fechaInicio, fechaFin } = req.body;
     const evidenciaFile = req.file;
 
     if (!descripcion || !evidenciaFile) {
         throw new ApiError('Descripción y evidencia médica son obligatorias.', 400);
     }
 
+    if (!fechaInicio || !fechaFin) {
+        throw new ApiError('Fecha de inicio y fin son obligatorias.', 400);
+    }
+
     const solicitud = await lesionService.crearSolicitud(alumnoId, {
         descripcion,
-        evidenciaFile
+        evidenciaFile,
+        fechaFin,
+        fechaInicio
     });
 
     return apiResponse.created(res, { data: solicitud, message: 'Solicitud de lesión enviada correctamente.' });
@@ -40,25 +46,12 @@ const evaluarSolicitud = catchAsync(async (req, res) => {
     const { solicitudId } = req.params;
     const {
         estado,
-        notas,
-        tipo,        // 'RANGO' o 'INDEFINIDO'
-        fechaInicio,
-        fechaFin
+        notas
     } = req.body;
 
     // 1. Validaciones de entrada
     if (!['APROBADA', 'RECHAZADA'].includes(estado)) {
         throw new ApiError('Estado inválido. Debe ser APROBADA o RECHAZADA.', 400);
-    }
-
-    // Si aprueba, exigimos datos extra
-    if (estado === 'APROBADA') {
-        if (!tipo || !fechaInicio) {
-            throw new ApiError('Para aprobar, es obligatorio indicar el tipo (RANGO/INDEFINIDO) y la fecha de inicio.', 400);
-        }
-        if (tipo === 'RANGO' && !fechaFin) {
-            throw new ApiError('Para lesiones de tipo RANGO, la fecha fin es obligatoria.', 400);
-        }
     }
 
     // 2. Llamada al servicio
@@ -67,9 +60,6 @@ const evaluarSolicitud = catchAsync(async (req, res) => {
         estado,
         adminId,
         notas,
-        tipo,
-        fechaInicio,
-        fechaFin
     });
 
     return apiResponse.success(res, { data: resultado, message: `Solicitud ${estado} correctamente.` });

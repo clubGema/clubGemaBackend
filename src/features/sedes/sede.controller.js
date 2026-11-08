@@ -72,6 +72,15 @@ export const sedeController = {
       data: null,
     });
   }),
+  getReporteOcupacionDetallado: catchAsync(async (req, res) => {
+    const { mes, anio, sedeId } = req.query;
+    const reporte = await sedeService.obtenerReporteOcupacionDetallado({ mes, anio, sedeId });
+    return apiResponse.success(res, {
+      message: 'Reporte detallado de ocupación de sedes obtenido con éxito',
+      data: reporte
+    });
+  }),
+
   getOcupacionDashboard: catchAsync(async (req, res) => {
     const ocupacion = await sedeService.obtenerOcupacionDashboard();
     return apiResponse.success(res, {

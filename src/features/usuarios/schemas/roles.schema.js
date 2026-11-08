@@ -36,7 +36,7 @@ export const rolesSpecificSchemas = {
         }),
       })
       .optional(),
-    direccion: direccionSchema,
+    direccion: direccionSchema.optional(),
   }),
 
   coordinadorSpecificSchema: z.object({

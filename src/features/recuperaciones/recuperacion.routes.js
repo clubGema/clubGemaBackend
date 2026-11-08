@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { recuperacionController } from './recuperacion.controller.js';
+import { recuperacionAnticipadaController } from './recuperacion-anticipada.controller.js';
 import { authenticate } from '../../shared/middlewares/auth.middleware.js';
 import { authorize } from '../../shared/middlewares/authorize.middleware.js';
 
@@ -58,6 +59,25 @@ router.get(
     '/depuracion', 
     authorize('Administrador'), 
     recuperacionController.listarParaDepuracion
+);
+
+// 🗓️ RECUPERACIÓN ANTICIPADA (el alumno avisa antes de faltar)
+router.get(
+    '/anticipadas/clases',
+    authorize('Alumno', 'Administrador'),
+    recuperacionAnticipadaController.obtenerClases
+);
+
+router.post(
+    '/anticipadas',
+    authorize('Alumno', 'Administrador'),
+    recuperacionAnticipadaController.marcarFalta
+);
+
+router.delete(
+    '/anticipadas/:registroId',
+    authorize('Alumno', 'Administrador'),
+    recuperacionAnticipadaController.cancelarFalta
 );
 
 export default router;

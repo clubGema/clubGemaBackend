@@ -1,8 +1,23 @@
 import { PrismaClient } from '@prisma/client';
 import dayjs from 'dayjs';
+import utc from 'dayjs/plugin/utc.js';
+import timezone from 'dayjs/plugin/timezone.js';
 import crypto from 'crypto';
+import { merchService } from '../merch/merch.service.js';
 import { detectarRegimenAlumno } from '../inscripciones/logic/inscripcion.logic.js';
 import * as Validators from '../inscripciones/validators/inscripcion.validator.js';
+import { TZ_LIMA } from '../../shared/utils/ciclo.util.js';
+// 🎯 BL-001: una clase suelta no se renueva.
+import { TIPO_INSCRIPCION, whereTipoInscripcion } from '../../shared/utils/tipo-inscripcion.util.js';
+// 💰 BL-002: reparto de dinero en céntimos exactos y sincronización del puente.
+import { repartirMonto, redondear2 } from '../../shared/utils/dinero.util.js';
+import { sincronizarPuenteDeuda } from '../../shared/utils/deuda-puente.util.js';
+import { fechaUltimaClase } from '../../shared/utils/fecha-ultima-clase.util.js';
+
+// 🔧 BL-011: este archivo importaba dayjs pelado, sin plugins, así que no podía
+// anclar las fechas de ciclo a Lima y el parseo caía en la hora local del server.
+dayjs.extend(utc);
+dayjs.extend(timezone);
 
 const prisma = new PrismaClient();
 
@@ -92,6 +107,17 @@ export const CuentasPorCobrarService = {
         }
       }
 
+      // 🌉 BL-002: si la cuenta ya tuviera links y los beneficios bajaron el
+      // monto, hay que re-equilibrar el puente. Es no-op cuando la cuenta se
+      // acaba de crear y todavía no tiene links, que es el caso habitual acá.
+      if (beneficiosEnCola.length > 0) {
+        const cuentaConDescuentos = await tx.cuentas_por_cobrar.findUnique({
+          where: { id: nuevaCuenta.id },
+          select: { monto_final: true },
+        });
+        await sincronizarPuenteDeuda(tx, nuevaCuenta.id, cuentaConDescuentos.monto_final);
+      }
+
       // Retornamos la cuenta final (ya sea con descuento o sin él)
       return await tx.cuentas_por_cobrar.findUnique({
         where: { id: nuevaCuenta.id },
@@ -142,7 +168,8 @@ export const CuentasPorCobrarService = {
     // PASO 3: Pagos
     await tx.pagos.deleteMany({ where: { cuenta_id: cuenta.id } });
 
-    // PASO 4: Borrado final
+    // PASO 4: Borrado final (el merch reservado devuelve su stock)
+    await merchService.liberarMerchDeCuenta(tx, cuenta.id);
     const resultado = await tx.cuentas_por_cobrar.delete({
       where: { id: cuenta.id },
     });
@@ -296,80 +323,109 @@ export const CuentasPorCobrarService = {
 
   // 2. MOTOR DE RENOVACIÓN: Procesa el paquete completo
   async generarRenovacionPaquete(grupoUuid, fechaInicioNueva) {
-  return await prisma.$transaction(async (tx) => {
-    const paqueteActual = await tx.inscripciones.findMany({
-      where: { id_grupo_transaccion: grupoUuid, estado: 'ACTIVO' }
-    });
+    // 🛡️ BL-001: guardia de parámetro. Prisma IGNORA las claves `undefined` en
+    // el where, así que un grupoUuid vacío convertía este findMany en "todas las
+    // inscripciones ACTIVO del sistema" y habría renovado el club entero.
+    if (!grupoUuid) throw new Error("Se requiere el id de grupo de transacción del paquete.");
 
-    if (paqueteActual.length === 0) throw new Error("No hay horarios activos.");
+    return await prisma.$transaction(async (tx) => {
+      // 🚩 BL-001: filtro defensivo por tipo. Las INDIVIDUAL nacen con
+      // id_grupo_transaccion: null, así que de hecho ya no entran; esto es el
+      // cinturón de seguridad por si alguna quedara agrupada.
+      const paqueteActual = await tx.inscripciones.findMany({
+        where: {
+          id_grupo_transaccion: grupoUuid,
+          estado: 'ACTIVO',
+          ...whereTipoInscripcion(TIPO_INSCRIPCION.REGULAR)
+        }
+      });
 
-    const esLegacy = await detectarRegimenAlumno(tx, paqueteActual[0].alumno_id)
-    const conceptoPaquete = await tx.catalogo_conceptos.findFirst({
-      where: { cantidad_clases_semanal: paqueteActual.length, activo: true, es_vigente: !esLegacy }
-    });
+      if (paqueteActual.length === 0) throw new Error("No hay horarios activos.");
 
-    const montoTotal = Number(conceptoPaquete.precio_base);
-    const fechaOriginalParaRevertir = paqueteActual[0].fecha_inscripcion;
+      const esLegacy = await detectarRegimenAlumno(tx, paqueteActual[0].alumno_id)
+      const conceptoPaquete = await tx.catalogo_conceptos.findFirst({
+        where: { cantidad_clases_semanal: paqueteActual.length, activo: true, es_vigente: !esLegacy }
+      });
 
-    const nuevaCuenta = await tx.cuentas_por_cobrar.create({
-      data: {
-        alumno_id: paqueteActual[0].alumno_id,
-        concepto_id: conceptoPaquete.id,
-        monto_final: montoTotal,
-        detalle_adicional: `RENOVACION|FECHA_ANT:${dayjs(fechaOriginalParaRevertir).format('YYYY-MM-DD')}|Ciclo:${dayjs(fechaInicioNueva).format('MMMM')}`,
-        fecha_vencimiento: dayjs().add(2, 'day').toDate(),
-        estado: 'PENDIENTE'
+      // 🛡️ BL-002: sin esta guarda, la línea siguiente reventaba con un
+      // `TypeError: Cannot read properties of undefined` en vez de decir qué
+      // faltaba. La variante generarRenovacionPaqueteValidado ya la tenía.
+      if (!conceptoPaquete) throw new Error(`⛔ No existe un plan para ${paqueteActual.length} clases en el catálogo.`);
+
+      // 💰 BL-002: el precio sale del catálogo, normalizado a 2 decimales.
+      // 🛍️ El merch es de pago único: el monto de la renovación es solo el plan, nunca
+      // arrastra ni suma el merch de la cuenta anterior (tests/merch-ingresos-imagenes.test.js).
+      const montoTotal = redondear2(conceptoPaquete.precio_base);
+      const fechaOriginalParaRevertir = paqueteActual[0].fecha_inscripcion;
+
+      const nuevaCuenta = await tx.cuentas_por_cobrar.create({
+        data: {
+          alumno_id: paqueteActual[0].alumno_id,
+          concepto_id: conceptoPaquete.id,
+          monto_final: montoTotal,
+          detalle_adicional: `RENOVACION|FECHA_ANT:${dayjs(fechaOriginalParaRevertir).format('YYYY-MM-DD')}|Ciclo:${dayjs(fechaInicioNueva).format('MMMM')}`,
+          fecha_vencimiento: dayjs().add(2, 'day').toDate(),
+          estado: 'PENDIENTE'
+        }
+      });
+
+      // 💰 BL-002: antes `montoTotal / n` perdía el céntimo del residuo al
+      // redondear cada parte por separado en Decimal(10,2) (400/3 -> 399.99).
+      const partesPorSlot = repartirMonto(montoTotal, paqueteActual.length);
+
+      const paqueteIds = paqueteActual.map(i => i.id);
+      const ultimaFecha = await fechaUltimaClase(paqueteIds);
+
+      await tx.inscripciones_deudas_link.updateMany({
+        where: {
+          inscripcion_id: { in: paqueteActual.map(i => i.id) },
+          fecha_fin_ciclo: null
+        },
+        data: { fecha_fin_ciclo: ultimaFecha }
+      });
+
+      for (let i = 0; i < paqueteActual.length; i++) {
+        const ins = paqueteActual[i];
+        await tx.inscripciones.update({
+          where: { id: ins.id },
+          data: {
+            fecha_inscripcion: dayjs.tz(fechaInicioNueva, TZ_LIMA).hour(12).toDate(), // 🔧 BL-011: mediodía Lima
+            fecha_inscripcion_original: dayjs.tz(fechaInicioNueva, TZ_LIMA).hour(12).toDate(), // 🔧 BL-011: mediodía Lima
+            actualizado_en: new Date(),
+            estado: 'PENDIENTE_PAGO'
+          }
+        });
+
+        await tx.inscripciones_deudas_link.create({
+          data: {
+            inscripcion_id: ins.id,
+            cuenta_id: nuevaCuenta.id,
+            monto_asignado: partesPorSlot[i],
+            fecha_inicio_ciclo: dayjs.tz(fechaInicioNueva, TZ_LIMA).hour(12).toDate(), // 🔧 BL-011: mediodía Lima
+            fecha_fin_ciclo: ultimaFecha,
+          }
+        });
       }
+
+      return { success: true, cuenta_id: nuevaCuenta.id };
     });
-
-    const montoPorSlot = montoTotal / paqueteActual.length;
-
-    // 🚩 NUEVO: cerramos el ciclo viejo ANTES del loop
-    const fechaCierre = dayjs(fechaInicioNueva).subtract(1, 'day').toDate();
-    await tx.inscripciones_deudas_link.updateMany({
-      where: {
-        inscripcion_id: { in: paqueteActual.map(i => i.id) },
-        fecha_fin_ciclo: null
-      },
-      data: { fecha_fin_ciclo: fechaCierre }
-    });
-
-    for (const ins of paqueteActual) {
-      await tx.inscripciones.update({
-        where: { id: ins.id },
-        data: {
-          fecha_inscripcion: dayjs(fechaInicioNueva).toDate(),
-          fecha_inscripcion_original: dayjs(fechaInicioNueva).toDate(),
-          actualizado_en: new Date(),
-          estado: 'PENDIENTE_PAGO'
-        }
-      });
-
-      await tx.inscripciones_deudas_link.create({
-        data: {
-          inscripcion_id: ins.id,
-          cuenta_id: nuevaCuenta.id,
-          monto_asignado: montoPorSlot,
-          fecha_inicio_ciclo: dayjs(fechaInicioNueva).toDate(),  // 🚩 NUEVO
-          fecha_fin_ciclo: null                                  // 🚩 NUEVO
-        }
-      });
-    }
-
-    return { success: true, cuenta_id: nuevaCuenta.id };
-  });
-},
+  },
   // 3. MOTOR DE RENOVACIÓN CON VALIDACIÓN DE AFORO (para paquetes FINALIZADOS
   // que llevan tiempo sin actividad — a diferencia de generarRenovacionPaquete,
   // aquí SÍ verificamos cupo disponible antes de reactivar cada horario,
   // porque el slot pudo llenarse mientras el paquete estaba inactivo).
   async generarRenovacionPaqueteValidado(grupoUuid, fechaInicioNueva) {
+    // 🛡️ BL-001: misma guardia que en generarRenovacionPaquete (ver allí).
+    if (!grupoUuid) throw new Error("Se requiere el id de grupo de transacción del paquete.");
+
     return await prisma.$transaction(async (tx) => {
       // Acepta ACTIVO y FINALIZADO — a diferencia del original que solo servía ACTIVO
+      // 🚩 BL-001: filtro defensivo por tipo (una clase suelta no se renueva).
       const paqueteActual = await tx.inscripciones.findMany({
         where: {
           id_grupo_transaccion: grupoUuid,
-          estado: { in: ['ACTIVO', 'FINALIZADO'] }
+          estado: { in: ['ACTIVO', 'FINALIZADO'] },
+          ...whereTipoInscripcion(TIPO_INSCRIPCION.REGULAR)
         }
       });
 
@@ -390,7 +446,9 @@ export const CuentasPorCobrarService = {
 
       if (!conceptoPaquete) throw new Error(`⛔ No existe un plan para ${paqueteActual.length} clases en el catálogo.`);
 
-      const montoTotal = Number(conceptoPaquete.precio_base);
+      // 💰 BL-002: el precio sale del catálogo, normalizado a 2 decimales.
+      // 🛍️ Solo el plan: el merch (pago único) del ciclo anterior no se arrastra.
+      const montoTotal = redondear2(conceptoPaquete.precio_base);
       const fechaOriginalParaRevertir = paqueteActual[0].fecha_inscripcion;
 
       const nuevaCuenta = await tx.cuentas_por_cobrar.create({
@@ -404,23 +462,27 @@ export const CuentasPorCobrarService = {
         }
       });
 
-      const montoPorSlot = montoTotal / paqueteActual.length;
+      // 💰 BL-002: reparto exacto en céntimos (ver generarRenovacionPaquete).
+      const partesPorSlot = repartirMonto(montoTotal, paqueteActual.length);
 
-      const fechaCierre = dayjs(fechaInicioNueva).subtract(1, 'day').toDate();
+      const paqueteIds = paqueteActual.map(i => i.id);
+      const ultimaFecha = await fechaUltimaClase(paqueteIds);
+
       await tx.inscripciones_deudas_link.updateMany({
         where: {
           inscripcion_id: { in: paqueteActual.map(i => i.id) },
           fecha_fin_ciclo: null
         },
-        data: { fecha_fin_ciclo: fechaCierre }
+        data: { fecha_fin_ciclo: ultimaFecha }
       });
 
-      for (const ins of paqueteActual) {
+      for (let i = 0; i < paqueteActual.length; i++) {
+        const ins = paqueteActual[i];
         await tx.inscripciones.update({
           where: { id: ins.id },
           data: {
-            fecha_inscripcion: dayjs(fechaInicioNueva).toDate(),
-            fecha_inscripcion_original: dayjs(fechaInicioNueva).toDate(),
+            fecha_inscripcion: dayjs.tz(fechaInicioNueva, TZ_LIMA).hour(12).toDate(), // 🔧 BL-011: mediodía Lima
+            fecha_inscripcion_original: dayjs.tz(fechaInicioNueva, TZ_LIMA).hour(12).toDate(), // 🔧 BL-011: mediodía Lima
             actualizado_en: new Date(),
             estado: 'PENDIENTE_PAGO'
           }
@@ -430,9 +492,9 @@ export const CuentasPorCobrarService = {
           data: {
             inscripcion_id: ins.id,
             cuenta_id: nuevaCuenta.id,
-            monto_asignado: montoPorSlot,
-            fecha_inicio_ciclo: dayjs(fechaInicioNueva).toDate(),
-            fecha_fin_ciclo: null
+            monto_asignado: partesPorSlot[i],
+            fecha_inicio_ciclo: dayjs.tz(fechaInicioNueva, TZ_LIMA).hour(12).toDate(), // 🔧 BL-011: mediodía Lima
+            fecha_fin_ciclo: ultimaFecha
           }
         });
       }

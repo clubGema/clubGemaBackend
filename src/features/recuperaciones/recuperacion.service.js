@@ -1,6 +1,84 @@
 import { prisma } from '../../config/database.config.js';
 import { ApiError } from '../../shared/utils/error.util.js';
 
+// fix de zona horaria - Configuración estándar para Lima (UTC-5) sin desfase
+import dayjs from 'dayjs';
+import utc from 'dayjs/plugin/utc.js';
+import timezone from 'dayjs/plugin/timezone.js';
+
+dayjs.extend(utc);
+dayjs.extend(timezone);
+const TZ_LIMA = 'America/Lima';
+
+// fix de zona horaria - Extractor plano YYYY-MM-DD inmune a timezone local o UTC
+export const claveDia = (fecha) => {
+  if (!fecha) return null;
+  if (typeof fecha === 'string') {
+    const match = fecha.match(/^(\d{4}-\d{2}-\d{2})/);
+    if (match) return match[1];
+  }
+  return new Date(fecha).toISOString().slice(0, 10);
+};
+
+// fix de zona horaria - Formateador HH:mm de horas guardadas en base de datos
+export const horaHHmm = (hora) => {
+  if (!hora) return '00:00';
+  const d = new Date(hora);
+  return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
+};
+
+/**
+ * Cupo de recuperaciones de faltas normales por ciclo, según los días/semana
+ * (inscripciones ACTIVAS) del alumno:
+ *   1 día/semana   -> 1 recuperación
+ *   2 o 3 días     -> 2 recuperaciones
+ *   4 o más días   -> 4 recuperaciones
+ * Las de lesión (es_por_lesion) NO cuentan contra este cupo.
+ */
+export const limiteRecuperaciones = (cantidadInscripciones, meses = 1) => {
+  const n = Number(cantidadInscripciones) || 0;
+  const m = Math.max(1, Number(meses) || 1);
+  let cupoPorMes = 0;
+  if (n >= 4) cupoPorMes = 4;
+  else if (n >= 2) cupoPorMes = 2;
+  else if (n === 1) cupoPorMes = 1;
+  return cupoPorMes * m;
+};
+
+/**
+ * Calcula cuántos meses tiene pagados el paquete activo del alumno
+ * basándose en el total de clases regulares generadas (4 clases por mes por horario).
+ */
+export const calcularMesesPaquete = async (cliente, alumnoId, cantidadInscripciones) => {
+  const id = Number.parseInt(alumnoId);
+  const diasSemana = Number(cantidadInscripciones) || 1;
+  const totalClases = await cliente.registros_asistencia.count({
+    where: {
+      inscripciones: { alumno_id: id, estado: 'ACTIVO' },
+      NOT: { comentario: { contains: '[RECUPERACION]' } }
+    }
+  });
+  const clasesPorMes = diasSemana * 4;
+  return clasesPorMes > 0 ? Math.max(1, Math.round(totalClases / clasesPorMes)) : 1;
+};
+
+/**
+ * Fecha fin REAL del ciclo del alumno = fecha de su última clase regular
+ * generada (registros_asistencia), sin contar las filas [RECUPERACION].
+ * Es la fecha que rige hasta cuándo se puede recuperar (reemplaza los 30 días).
+ * Devuelve Date (@db.Date, 00:00 UTC) o null si el alumno no tiene clases.
+ */
+export const ultimaClaseRegular = async (cliente, alumnoId) => {
+  const registros = await cliente.registros_asistencia.findMany({
+    where: { inscripciones: { alumno_id: Number.parseInt(alumnoId) } },
+    select: { fecha: true, comentario: true },
+    orderBy: { fecha: 'desc' },
+    take: 60,
+  });
+  const regular = registros.find((r) => !r.comentario?.includes('[RECUPERACION]'));
+  return regular ? regular.fecha : null;
+};
+
 // Crear registro de recuperacion pendiente en caso sea marcado como FALTA.
 // faltaPendiente = Ticket de Recuperación
 const registrarFaltaPendiente = async (tx, alumnoId, fechaFalta, asistenciaId) => {
@@ -12,8 +90,8 @@ const registrarFaltaPendiente = async (tx, alumnoId, fechaFalta, asistenciaId) =
     },
   });
 
-  // Si tiene menos de 2 inscripciones, entonces no se crea una recuperacion pendiente.
-  if (cantidadInscripciones < 2) {
+  // Sin inscripciones activas no hay ciclo del cual recuperar.
+  if (cantidadInscripciones < 1) {
     return null; // Retornamos null para indicar que no se creó nada.
   }
 
@@ -80,8 +158,9 @@ const registrarFaltaPendiente = async (tx, alumnoId, fechaFalta, asistenciaId) =
     },
   });
 
-  // Definir su límite según su plan
-  const limitePermitido = cantidadInscripciones >= 4 ? 4 : 2;
+  // Definir su límite según su plan y meses pagados
+  const mesesPaquete = await calcularMesesPaquete(tx, alumnoId, cantidadInscripciones);
+  const limitePermitido = limiteRecuperaciones(cantidadInscripciones, mesesPaquete);
 
   // Si ya llegó al tope, abortamos la creación del ticket
   if (tickets >= limitePermitido) {
@@ -139,30 +218,14 @@ const cancelarRecuperacion = async (alumnoId, recuperacionId) => {
     throw new ApiError('Solo puedes cancelar recuperaciones que estén programadas.', 400);
   }
 
-  // 3. Lógica del Reloj (Validación de 1 hora)
-  const ahora = new Date();
-  ahora.setHours(ahora.getHours() - 5);
+  // fix de zona horaria - Validación de 1 hora con Dayjs en America/Lima inmune a medianoches y desajuste UTC
+  const ahoraLima = dayjs().tz(TZ_LIMA);
+  const diaTexto = claveDia(ticket.fecha_programada);
+  const horaTexto = horaHHmm(ticket.horarios_clases?.hora_inicio);
+  const fechaHoraClaseLima = dayjs.tz(`${diaTexto}T${horaTexto}:00`, TZ_LIMA);
 
-  // Armamos la fecha y hora exacta de la clase
-  const fechaProg = new Date(ticket.fecha_programada);
-  const horaInicio = new Date(ticket.horarios_clases.hora_inicio);
-
-  const fechaClase = new Date(Date.UTC(
-    fechaProg.getUTCFullYear(),
-    fechaProg.getUTCMonth(),
-    fechaProg.getUTCDate(),
-    horaInicio.getUTCHours(),
-    horaInicio.getUTCMinutes(),
-    0,
-    0
-  ));
-
-  // Calculamos la diferencia en milisegundos y la pasamos a horas
-  const diferenciaMilisegundos = fechaClase.getTime() - ahora.getTime();
-  const horasFaltantes = diferenciaMilisegundos / (1000 * 60 * 60);
-
-  // Si falta menos de 1 hora o ya pasó la clase, no se puede cancelar.
-  if (horasFaltantes < 1) {
+  // Si falta menos de 1 hora (60 minutos) o ya pasó la clase, no se puede cancelar.
+  if (fechaHoraClaseLima.diff(ahoraLima, 'minute') < 60) {
     throw new ApiError(
       'Ya no puedes cancelar esta clase. Debes hacerlo con al menos 1 hora de anticipación.',
       400
@@ -300,7 +363,8 @@ const obtenerPendientes = async (alumnoId) => {
     },
   });
 
-  const limitePermitido = cantidadInscripciones >= 4 ? 4 : 2;
+  const mesesPaquete = await calcularMesesPaquete(prisma, alumnoId, cantidadInscripciones);
+  const limitePermitido = limiteRecuperaciones(cantidadInscripciones, mesesPaquete);
 
   const recuperacionesUsadas = await prisma.recuperaciones.count({
     where: {
@@ -312,6 +376,7 @@ const obtenerPendientes = async (alumnoId) => {
   });
 
   // Inyectamos en cada ticket sin lesión la fecha límite
+  const fechaFinCiclo = await ultimaClaseRegular(prisma, alumnoId);
   const pendientesConFechaLimite = pendientes.map((ticket) => {
 
     if (ticket.es_por_lesion) {
@@ -321,12 +386,9 @@ const obtenerPendientes = async (alumnoId) => {
       };
     }
 
-    const fechaLimiteValida = new Date(ticket.fecha_falta);
-    fechaLimiteValida.setUTCDate(fechaLimiteValida.getUTCDate() + 30);
-
     return {
       ...ticket,
-      fecha_caducidad: fechaLimiteValida,
+      fecha_caducidad: fechaFinCiclo,
     };
   });
 
@@ -371,57 +433,79 @@ const validarElegibilidad = async (alumnoId, recuperacionId, fechaProgramada, ho
     },
   });
 
-  const hoyUTC = new Date();
-  if (fechaProgramadaDate < hoyUTC) {
+  // fix de zona horaria - Validación de fecha programada contra hoy en Lima (YYYY-MM-DD)
+  const hoyLimaKey = dayjs().tz(TZ_LIMA).format('YYYY-MM-DD');
+  const diaProgramadoKey = claveDia(fechaProgramada);
+  if (diaProgramadoKey < hoyLimaKey) {
     throw new ApiError('La fecha programada no puede ser anterior a hoy.', 400);
   }
 
-  // Traer fecha local y convertirla a string
-  const fechaLocalTexto = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
-  // Crear un date con ese string forzando la hora en UTC (Z = UTC  /  -05:00 = GMT-5)
-  const hoy = new Date(`${fechaLocalTexto}T00:00:00Z`);
+  // fix de zona horaria - Detección de cruce por fecha plana YYYY-MM-DD y rango horario sin descalce de milisegundos
+  const horarioDestino = await prisma.horarios_clases.findUnique({
+    where: { id: Number.parseInt(horarioDestinoId) },
+    select: { hora_inicio: true, hora_fin: true }
+  });
 
+  const destInicio = horaHHmm(horarioDestino?.hora_inicio);
+  const destFin = horaHHmm(horarioDestino?.hora_fin);
+
+  // 1. Cruce con clases regulares del alumno ese día
   const clasesRegulares = await prisma.registros_asistencia.findMany({
     where: {
-      inscripciones: {
-        alumno_id: alumnoId,
-      },
+      inscripciones: { alumno_id: Number.parseInt(alumnoId) },
+      estado: 'PROGRAMADA',
     },
     select: {
       fecha: true,
       inscripciones: {
         select: {
           horarios_clases: {
-            select: { hora_inicio: true, id: true }
+            select: { hora_inicio: true, hora_fin: true, id: true }
           },
         }
       }
     }
-  })
+  });
 
-  const fechasClasesRegulares = [];
-  for (const clase of clasesRegulares) {
-    const fecha = clase.fecha;
-    const hora = clase.inscripciones.horarios_clases.hora_inicio;
+  const cruceConRegular = clasesRegulares.some((clase) => {
+    const diaClase = claveDia(clase.fecha);
+    if (diaClase !== diaProgramadoKey) return false;
+    const regInicio = horaHHmm(clase.inscripciones?.horarios_clases?.hora_inicio);
+    const regFin = horaHHmm(clase.inscripciones?.horarios_clases?.hora_fin);
+    return destInicio < regFin && destFin > regInicio;
+  });
 
-    const fechaCompleta = new Date(
-      fecha.getUTCFullYear(),
-      fecha.getUTCMonth(),
-      fecha.getUTCDate(),
-      hora.getUTCHours(),
-      hora.getUTCMinutes(),
-      0
-    )
-
-    fechasClasesRegulares.push({ fecha_clase: fechaCompleta, id_horario: clase.inscripciones.horarios_clases.id });
+  if (cruceConRegular) {
+    throw new ApiError(
+      'No se puede agendar este día, corresponde a tu horario regular. Selecciona otro turno disponible.',
+      400
+    );
   }
 
-  // Verificamos que su dia de recuperación no interfiera con el horario regular del alumno.
-  const cruceHorarios = fechasClasesRegulares.some(f => f.fecha_clase.getTime() === fechaProgramadaDate.getTime() && f.id_horario === horarioDestinoId);
+  // 2. Cruce con OTRA recuperación ya programada del mismo alumno ese día
+  const otrasRecuperaciones = await prisma.recuperaciones.findMany({
+    where: {
+      alumno_id: Number.parseInt(alumnoId),
+      estado: 'PROGRAMADA',
+      id: { not: Number.parseInt(recuperacionId) },
+    },
+    select: {
+      fecha_programada: true,
+      horarios_clases: { select: { hora_inicio: true, hora_fin: true } }
+    }
+  });
 
-  if (cruceHorarios) {
+  const cruceConOtraRecu = otrasRecuperaciones.some((recu) => {
+    const diaRecu = claveDia(recu.fecha_programada);
+    if (diaRecu !== diaProgramadoKey) return false;
+    const otraInicio = horaHHmm(recu.horarios_clases?.hora_inicio);
+    const otraFin = horaHHmm(recu.horarios_clases?.hora_fin);
+    return destInicio < otraFin && destFin > otraInicio;
+  });
+
+  if (cruceConOtraRecu) {
     throw new ApiError(
-      `No se puede agendar este día, corresponde a tu horario regular. Selecciona otro turno disponible.`,
+      'Ya tienes otra clase de recuperación programada en este mismo horario.',
       400
     );
   }
@@ -432,18 +516,16 @@ const validarElegibilidad = async (alumnoId, recuperacionId, fechaProgramada, ho
     return true;
   }
 
-  const fechaLimiteValida = new Date(faltaPendiente.fecha_falta);
-  fechaLimiteValida.setUTCDate(fechaLimiteValida.getUTCDate() + 60);
-
-  // Traer fecha local y convertirla a string
-  const fechaProgramadaTexto = fechaProgramadaDate.toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
-  // Crear un date con ese string forzando la hora en UTC (Z = UTC  /  -05:00 = GMT-5)
-  const fechaProgramadaLocal = new Date(`${fechaProgramadaTexto}T00:00:00Z`);
-
-  if (fechaProgramadaLocal > fechaLimiteValida) {
-    throw new ApiError('La vigencia para recuperar esta falta ha expirado o sobrepasa la fecha límite.', 400);
+  // fix de zona horaria - Comparación de fecha fin de ciclo usando cadenas planas YYYY-MM-DD
+  const fechaLimiteValida = await ultimaClaseRegular(prisma, alumnoId);
+  if (fechaLimiteValida) {
+    const fechaLimite = claveDia(fechaLimiteValida)
+    const fechaLimiteTolerancia = new Date(fechaLimite)
+    fechaLimiteTolerancia.setUTCDate(fechaLimiteTolerancia.getUTCDate() + 30)
+    if (diaProgramadoKey > fechaLimiteTolerancia) {
+      throw new ApiError('La recuperación debe realizarse a más tardar el último día de tus clases del ciclo.', 400);
+    }
   }
-
   // Si ya no cuenta con inscripciones activas, no es necesario que haya un límite, ya que no seguirá generando tickets.
   if (inscripciones.length === 0) return true;
 
@@ -462,11 +544,8 @@ const validarElegibilidad = async (alumnoId, recuperacionId, fechaProgramada, ho
     },
   });
 
-  let limitePermitido = 2;
-  // Cantidad de clases inscritas >= 4
-  if (inscripciones.length >= 4) {
-    limitePermitido = 4;
-  }
+  const mesesPaquete = await calcularMesesPaquete(prisma, alumnoId, inscripciones.length);
+  const limitePermitido = limiteRecuperaciones(inscripciones.length, mesesPaquete);
 
   if (recuperacionesRealizadas >= limitePermitido) {
     throw new ApiError(`Has alcanzado tu límite de ${limitePermitido} recuperaciones.`, 400);
@@ -482,10 +561,8 @@ const agendarRecuperacion = async ({ alumnoId, recuperacionId, horarioDestinoId,
   // 1. Re-validar reglas de negocio (Doble check de seguridad)
   await validarElegibilidad(alumnoId, recuperacionId, fechaProgramada, horarioDestinoId);
 
-  const soloFechaString = new Intl.DateTimeFormat('sv-SE', {
-    timeZone: 'America/Lima'
-  }).format(new Date(fechaProgramada));
-
+  // fix de zona horaria - Normalización canónica de fecha plana YYYY-MM-DD sin saltos de huso
+  const soloFechaString = claveDia(fechaProgramada);
   const fechaFinalUTC = new Date(`${soloFechaString}T00:00:00.000Z`);
 
   // 2. VALIDACIÓN DE AFORO
@@ -603,7 +680,19 @@ const eliminarRecuperacionAdmin = async (recuperacionId) => {
       return { message: 'Depuración exacta completada.' };
 
     } else {
-      // Si no es lesión, simplemente borramos el registro
+      // Si era una falta anticipada, restauramos la clase original a PROGRAMADA
+      if (ticket.registro_asistencia_id && ticket.motivo_falta === 'FALTA_ANTICIPADA') {
+        const reg = await tx.registros_asistencia.findUnique({ where: { id: ticket.registro_asistencia_id } });
+        if (reg) {
+          await tx.registros_asistencia.update({
+            where: { id: reg.id },
+            data: {
+              estado: 'PROGRAMADA',
+              comentario: (reg.comentario || '').replace('[FALTA_ANTICIPADA]', '').trim(),
+            },
+          });
+        }
+      }
       return await tx.recuperaciones.delete({
         where: { id: ticket.id }
       });

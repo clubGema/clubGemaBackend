@@ -1,41 +1,41 @@
 import { prisma } from '../../config/database.config.js';
 import { logger } from '../../shared/utils/logger.util.js';
+import { ultimaClaseRegular } from './recuperacion.service.js';
 
 class RecuperacionCronService {
+  // Un ticket normal PENDIENTE vence cuando ya pasó su tiempo de tolerancia
+  // (Tolerancia 30 días más a partir de su ultima clase).
   async ejecutarLimpiezaTickets() {
-    const treintaDiasAntes = new Date();
-    treintaDiasAntes.setUTCDate(treintaDiasAntes.getUTCDate() - 60)
+    const fechaLocalTexto = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
+    const hoy = new Date(`${fechaLocalTexto}T00:00:00Z`);
 
-    const ticketsActualizados = await prisma.recuperaciones.updateMany({
-      where: {
-        estado: 'PENDIENTE',
-        es_por_lesion: false,
-        fecha_falta: {
-          lt: treintaDiasAntes,
-        }
-      },
-      data: { estado: 'VENCIDA' },
-    })
+    const pendientes = await prisma.recuperaciones.findMany({
+      where: { estado: 'PENDIENTE', es_por_lesion: false },
+      select: { id: true, alumno_id: true },
+    });
+
+    const finPorAlumno = new Map();
+    const idsVencidos = [];
+    for (const t of pendientes) {
+      if (!finPorAlumno.has(t.alumno_id)) {
+        finPorAlumno.set(t.alumno_id, await ultimaClaseRegular(prisma, t.alumno_id));
+      }
+      const fin = finPorAlumno.get(t.alumno_id);
+      if (fin) {
+        const finConTolerancia = new Date(fin);
+        finConTolerancia.setUTCDate(finConTolerancia.getUTCDate() + 30);
+        if (finConTolerancia < hoy) idsVencidos.push(t.id);
+      }
+    }
+
+    const ticketsActualizados = idsVencidos.length
+      ? await prisma.recuperaciones.updateMany({
+        where: { id: { in: idsVencidos } },
+        data: { estado: 'VENCIDA' },
+      })
+      : { count: 0 };
     logger.info(`Se marcaron ${ticketsActualizados.count} tickets como vencidos.`);
   }
-
-  // Deshabilitado para que el coordinador pueda marcar al recuperante, incluso días después
-  // async ejecutarLimpiezaTicketsProgramados() {
-  //   const hoy = new Date();
-  //   hoy.setUTCHours(0, 0, 0, 0)
-  //   const ticketsActualizados = await prisma.recuperaciones.updateMany({
-  //     where: {
-  //       estado: 'PROGRAMADA',
-  //       fecha_programada: {
-  //         lt: hoy,
-  //       }
-  //     },
-  //     data: {
-  //       estado: 'COMPLETADA_FALTA',
-  //     }
-  //   })
-  //   logger.info(`Se actualizaron ${ticketsActualizados.count} recuperaciones como COMPLETADA_FALTA.`);
-  // }
 }
 
 export const recuperacionCronService = new RecuperacionCronService();

@@ -419,4 +419,121 @@ export const sedeService = {
     // Retornamos solo las sedes que tienen al menos 1 alumno
     return resultado.filter(r => r.valor > 0);
   },
+  /**
+   * Obtiene el reporte detallado de ocupación por sede.
+   * Permite filtrar por mes (1-12) y anio (ej. 2026), o consultar el estado actual.
+   * Responde a preguntas como: "¿Cuántas personas activas o con clases hubo en Surco en Octubre?"
+   */
+  obtenerReporteOcupacionDetallado: async ({ mes, anio, sedeId } = {}) => {
+    let fechaFiltro = null;
+    if (mes && anio) {
+      const m = Number(mes);
+      const y = Number(anio);
+      const inicio = new Date(Date.UTC(y, m - 1, 1, 0, 0, 0));
+      const fin = new Date(Date.UTC(y, m, 0, 23, 59, 59, 999));
+      fechaFiltro = { inicio, fin };
+    }
+
+    const whereSede = { activo: true };
+    if (sedeId) {
+      whereSede.id = Number(sedeId);
+    }
+
+    const sedes = await prisma.sedes.findMany({
+      where: whereSede,
+      include: {
+        canchas: {
+          include: {
+            horarios_clases: {
+              where: { activo: true },
+              include: {
+                inscripciones: {
+                  where: { estado: 'ACTIVO' },
+                  select: {
+                    id: true,
+                    alumno_id: true,
+                    fecha_inscripcion: true,
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    });
+
+    const reporteSedes = await Promise.all(sedes.map(async (sede) => {
+      let capacidadTotalSede = 0;
+      const alumnosInscritosUnicos = new Set();
+      const horarioIds = [];
+
+      sede.canchas.forEach(cancha => {
+        cancha.horarios_clases.forEach(h => {
+          capacidadTotalSede += (h.capacidad_max || 20);
+          horarioIds.push(h.id);
+          h.inscripciones.forEach(ins => {
+            if (!fechaFiltro || (new Date(ins.fecha_inscripcion) <= fechaFiltro.fin)) {
+              alumnosInscritosUnicos.add(ins.alumno_id);
+            }
+          });
+        });
+      });
+
+      // Alumnos únicos que tuvieron clases registradas de asistencia en esta sede
+      let alumnosConClasesUnicos = new Set();
+      if (horarioIds.length > 0) {
+        const whereAsist = {
+          inscripciones: {
+            horario_id: { in: horarioIds }
+          }
+        };
+        if (fechaFiltro) {
+          whereAsist.fecha = { gte: fechaFiltro.inicio, lte: fechaFiltro.fin };
+        }
+
+        const asistencias = await prisma.registros_asistencia.findMany({
+          where: whereAsist,
+          select: { inscripciones: { select: { alumno_id: true } } }
+        });
+        asistencias.forEach(a => {
+          if (a.inscripciones?.alumno_id) {
+            alumnosConClasesUnicos.add(a.inscripciones.alumno_id);
+          }
+        });
+      }
+
+      // Recuperaciones programadas para esta sede
+      let recuperacionesCount = 0;
+      if (horarioIds.length > 0) {
+        const whereRecu = {
+          horario_destino_id: { in: horarioIds },
+          estado: 'PROGRAMADA'
+        };
+        if (fechaFiltro) {
+          whereRecu.fecha_programada = { gte: fechaFiltro.inicio, lte: fechaFiltro.fin };
+        }
+        recuperacionesCount = await prisma.recuperaciones.count({ where: whereRecu });
+      }
+
+      const totalAlumnosActivos = new Set([...alumnosInscritosUnicos, ...alumnosConClasesUnicos]).size;
+      const porcentajeOcupacion = capacidadTotalSede > 0
+        ? Math.min(100, Math.round(((totalAlumnosActivos + recuperacionesCount) / capacidadTotalSede) * 100))
+        : 0;
+
+      return {
+        sede_id: sede.id,
+        sede_nombre: sede.nombre,
+        tipo_instalacion: sede.tipo_instalacion,
+        capacidad_maxima_total: capacidadTotalSede,
+        total_alumnos_activos: totalAlumnosActivos,
+        alumnos_con_clases_en_periodo: alumnosConClasesUnicos.size,
+        alumnos_inscritos_vigentes: alumnosInscritosUnicos.size,
+        recuperaciones_programadas: recuperacionesCount,
+        porcentaje_ocupacion: `${porcentajeOcupacion}%`,
+        periodo_consultado: fechaFiltro ? `${mes}/${anio}` : 'HISTORICO_ACTUAL'
+      };
+    }));
+
+    return reporteSedes;
+  },
 };

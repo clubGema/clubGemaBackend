@@ -4,6 +4,20 @@ const GRUPOS_SANGUINEOS = ['O+', 'O-', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-'];
 
 export const actualizarPerfilSchema = z
   .object({
+    nombres: z
+      .string()
+      .min(2, 'Debe tener al menos 2 caracteres')
+      .max(100, 'Máximo 100 caracteres')
+      .regex(/^[a-zA-ZáéíóúÁÉÍÓÚñÑ\s]+$/, 'Solo se permiten letras y espacios')
+      .optional(),
+
+    apellidos: z
+      .string()
+      .min(2, 'Debe tener al menos 2 caracteres')
+      .max(100, 'Máximo 100 caracteres')
+      .regex(/^[a-zA-ZáéíóúÁÉÍÓÚñÑ\s]+$/, 'Solo se permiten letras y espacios')
+      .optional(),
+
     email: z.string().email('Email inválido').optional(),
 
     telefono_personal: z
@@ -17,8 +31,8 @@ export const actualizarPerfilSchema = z
       .transform((val) => new Date(val))
       .optional(),
     genero: z
-      .enum(['M', 'F'], {
-        errorMap: () => ({ message: 'El género debe ser M o F' }),
+      .enum(['M', 'F', 'O'], {
+        errorMap: () => ({ message: 'El género debe ser M, F u O' }),
       })
       .optional(),
 
@@ -75,6 +89,36 @@ export const crearContactoSchema = z
       .regex(/^\+?[0-9]{7,15}$/, 'Formato de teléfono inválido'),
 
     es_principal: z.boolean().optional(),
+  })
+  .strict();
+
+/**
+ * 🆕 BL-007: formulario de contacto de emergencia (el principal del alumno).
+ *
+ * nombre_completo y telefono son REQUERIDOS —no opcionales como en
+ * actualizarContactoSchema— porque este endpoint también CREA la fila cuando el
+ * alumno no tiene contacto principal, y ambas columnas son NOT NULL en BD.
+ *
+ * es_principal no se acepta a propósito: este endpoint opera por definición
+ * sobre el contacto principal. Para gestionar varios contactos están los
+ * endpoints de /mi-perfil/contactos.
+ */
+export const actualizarContactoEmergenciaSchema = z
+  .object({
+    nombre_completo: z
+      .string()
+      .min(3, 'El nombre completo debe tener al menos 3 caracteres')
+      .max(150, 'Máximo 150 caracteres'),
+
+    relacion: z
+      .string()
+      .min(2, 'Indica la relación (ej. Madre, Padre, Tutor)')
+      .max(50, 'Máximo 50 caracteres')
+      .optional(),
+
+    telefono: z
+      .string()
+      .regex(/^\+?[0-9]{7,15}$/, 'Formato de teléfono inválido'),
   })
   .strict();
 
