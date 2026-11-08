@@ -233,7 +233,7 @@ export const pagosService = {
           }
         } else if (links.length > 0 && links[0].fecha_inicio_ciclo && links[0].fecha_fin_ciclo) {
           const diasDiff = Math.round((new Date(links[0].fecha_fin_ciclo) - new Date(links[0].fecha_inicio_ciclo)) / (1000 * 60 * 60 * 24));
-          const semanasAprox = Math.round(diasDiff / 7) + 1;
+          const semanasAprox = Math.round(diasDiff / 7);
           if (semanasAprox > CLASES_POR_CICLO) {
             cantidadClasesPorInscripcion = semanasAprox;
           }

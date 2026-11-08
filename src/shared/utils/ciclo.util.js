@@ -3,9 +3,6 @@ import utc from 'dayjs/plugin/utc.js';
 import timezone from 'dayjs/plugin/timezone.js';
 
 import { ApiError } from './error.util.js';
-// 🎯 BL-001: la dirección de dependencia es siempre ciclo → tipo-inscripcion,
-// nunca al revés (tipo-inscripcion.util.js no importa nada).
-import { esIndividual } from './tipo-inscripcion.util.js';
 
 dayjs.extend(utc);
 dayjs.extend(timezone);

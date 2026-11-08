@@ -1,34 +1,5 @@
 import dayjs from 'dayjs';
-import { aFechaUTC, sumarDiasUTC, diasEntreUTC } from './ciclo.util.js';
-import { claveDiaDesdeFecha } from './feriado.util.js';
-
-// =================================================================
-// 🔧 BL-005: el ciclo de deuda tiene que seguir a la clase REAL.
-//
-// Estado previo: `reprogramarMasivamente` movía la clase al final del ciclo y
-// movía `inscripciones.fecha_inscripcion`, pero NUNCA tocaba
-// `inscripciones_deudas_link.fecha_inicio_ciclo`, que es donde vive de verdad
-// la vigencia del ciclo (ver la cabecera de ciclo.util.js). Si la clase
-// reprogramada era la PRIMERA del ciclo, el alumno quedaba con un inicio de
-// ciclo en una fecha en la que ya no entrena, y el historial por mes (BL-012),
-// el exportador (BL-013) y el badge de vigencia mostraban una ventana
-// desfasada.
-//
-// 🚩 INVARIANTE DE BL-006 QUE ACÁ SE RESPETA:
-// para una inscripción REGULAR `fecha_fin_ciclo` se queda en NULL = VIGENTE.
-// El cierre NO se escribe a mano: lo deriva `finCicloEfectivo()` y lo aplica el
-// cron VERDUGO contando 30 días desde `fecha_inscripcion`. Por eso "recalcular
-// el cierre" se traduce en mover `fecha_inscripcion`, no en grabar
-// `fecha_fin_ciclo` (escribirlo rompería `es_vigente` del historial, el VERDUGO
-// y la renovación, que buscan los links con `fecha_fin_ciclo: null`).
-// Ver pagos.service.js:272-282.
-//
-// 🧱 Vive en shared/ y no en el feature `clases` porque los TRES sitios que
-// mueven clases necesitan exactamente la misma aritmética: el masivo, su
-// reversión y el cron que sincroniza a los inscritos tardíos. Una cuarta copia
-// divergente es justo lo que pasó con `calcularSiguienteDia`, hoy duplicado en
-// clase.service.js:51, asistencia-cron.service.js:22 y clase-cron.service.js:30.
-// =================================================================
+import { aFechaUTC } from './ciclo.util.js';
 
 /**
  * Estados de `registros_asistencia` que cuentan como "clase del ciclo".
