@@ -129,6 +129,11 @@ export const alumnoService = {
               include: {
                 canchas: { include: { sedes: true } }
               }
+            },
+            inscripciones_deudas_link: {
+              orderBy: {
+                id: 'desc'
+              }
             }
           }
         }
@@ -143,8 +148,7 @@ export const alumnoService = {
 
       const inscripcionesProcesadas = inscripcionesOrdenadas.map(ins => {
         const h = ins.horarios_clases;
-        const fechaCorte = new Date(ins.fecha_inscripcion);
-        fechaCorte.setDate(fechaCorte.getDate() + 29);
+        const fechaCorte = ins.inscripciones_deudas_link?.[0]?.fecha_fin_ciclo;
 
         return {
           inscripcion_id: ins.id,

@@ -28,17 +28,6 @@ const esConceptoIndividual = (nombreConcepto, detalleAdicional) => {
   return texto.includes('plan individual');
 };
 
-// 🎯 Misma regla de vigencia que usaba el frontend (addDays 29 + isPast),
-// pero calculada en el backend para no duplicar lógica ni mandar de más.
-const DIAS_VIGENCIA_INSCRIPCION = 29;
-
-const calcularFechaCorte = (fechaInscripcion) => {
-  if (!fechaInscripcion) return null;
-  const fecha = new Date(fechaInscripcion);
-  fecha.setDate(fecha.getDate() + DIAS_VIGENCIA_INSCRIPCION);
-  return fecha;
-};
-
 const estaVencida = (fechaCorte) => {
   if (!fechaCorte) return false;
   return fechaCorte.getTime() < Date.now();
@@ -121,6 +110,8 @@ export const historialAcademicoService = {
 
         const esIndividual = inscripcionesInfo.some((i) => i.tipo_inscripcion === 'INDIVIDUAL');
 
+        const fecha_fin_real = links[0].fecha_fin_ciclo
+
         return {
           cuenta_id: cuenta.id,
           concepto: cuenta.catalogo_conceptos?.nombre || cuenta.detalle_adicional,
@@ -128,7 +119,7 @@ export const historialAcademicoService = {
           monto_final: Number(cuenta.monto_final),
           fecha_vencimiento_pago: cuenta.fecha_vencimiento,
           fecha_inicio_real: todasLasFechas[0] ?? null,
-          fecha_fin_real: todasLasFechas[todasLasFechas.length - 1] ?? null,
+          fecha_fin_real,
           total_clases_paquete: todasLasFechas.length,
           sin_registros: todasLasFechas.length === 0,
           es_individual: esIndividual,

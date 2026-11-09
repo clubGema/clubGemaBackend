@@ -549,6 +549,9 @@ export const asistenciaService = {
                 },
               },
             },
+            inscripciones_deudas_link: {
+              orderBy: { id: 'desc' }
+            }
           },
         },
       },
