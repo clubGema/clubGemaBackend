@@ -4,16 +4,20 @@ import { BREVO_API_KEY, BREVO_SENDER_EMAIL, BREVO_TIMEOUT_MS, FRONTEND_URL } fro
 const buildBaseTemplate = (bodyContent) => `
   <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);">
     
-    <div style="background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%); padding: 40px 20px; text-align: center;">
-      <h1 style="color: #ffffff; margin: 0; font-size: 28px; letter-spacing: 1px; text-transform: uppercase;">Club Gema</h1>
-      <div style="height: 4px; width: 50px; background-color: #f97316; margin: 15px auto; border-radius: 2px;"></div>
+    <div style="background: linear-gradient(135deg, #0C0608 0%, #581220 60%, #7A1A2E 100%); padding: 40px 20px; text-align: center; border-bottom: 3px solid #D4AF37;">
+      <p style="color: #D4AF37; margin: 0 0 6px 0; font-size: 11px; font-weight: 700; letter-spacing: 3px; text-transform: uppercase;">Club &amp; Academia Deportiva</p>
+      <h1 style="color: #ffffff; margin: 0; font-size: 30px; letter-spacing: 2px; text-transform: uppercase; font-weight: 800;">IMPERIO <span style="color: #D4AF37;">7</span></h1>
+      <div style="height: 4px; width: 50px; background-color: #D4AF37; margin: 15px auto 0 auto; border-radius: 2px;"></div>
     </div>
 
     ${bodyContent}
 
-    <div style="background-color: #f1f5f9; padding: 20px; text-align: center;">
-      <p style="color: #64748b; font-size: 12px; margin: 0;">
-        © 2026 Club Gema. Todos los derechos reservados.
+    <div style="background-color: #0C0608; padding: 20px; text-align: center; border-top: 1px solid #581220;">
+      <p style="color: #D4AF37; font-size: 11px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; margin: 0 0 4px 0;">
+        Disciplina · Honor · Alto Rendimiento Deportivo
+      </p>
+      <p style="color: #94a3b8; font-size: 12px; margin: 0;">
+        © 2026 Imperio 7. Todos los derechos reservados.
       </p>
     </div>
   </div>
@@ -39,8 +43,8 @@ export const emailService = {
     const { to, toName, subject, htmlContent } = options;
     const bodyData = {
       sender: {
-        name: 'Club Gema',
-        email: BREVO_SENDER_EMAIL || 'no-reply@academiagema.com',
+        name: 'Imperio 7',
+        email: BREVO_SENDER_EMAIL || 'no-reply@imperio7.com',
       },
       to: [
         {
@@ -115,13 +119,13 @@ export const emailService = {
 
     const htmlContent = buildBaseTemplate(`
       <div style="padding: 40px 30px;">
-        <h2 style="color: #1e293b; margin-top: 0; font-size: 22px;">Hola, ${nombres}</h2>
+        <h2 style="color: #0C0608; margin-top: 0; font-size: 22px;">Hola, ${nombres}</h2>
         <p style="color: #475569; line-height: 1.6; font-size: 15px;">
-          Has solicitado restablecer tu contraseña. Haz clic en el siguiente botón para continuar:
+          Has solicitado restablecer tu contraseña en <strong>Imperio 7</strong>. Haz clic en el siguiente botón para continuar:
         </p>
 
         <div style="text-align: center; margin-top: 30px; margin-bottom: 30px;">
-          <a href="${resetLink}" style="background-color: #f97316; color: #ffffff; padding: 16px 32px; text-decoration: none; border-radius: 10px; font-weight: bold; font-size: 16px; display: inline-block; box-shadow: 0 10px 15px -3px rgba(249, 115, 22, 0.3);">
+          <a href="${resetLink}" style="background: linear-gradient(135deg, #581220 0%, #7A1A2E 100%); color: #ffffff; border: 1px solid #D4AF37; padding: 16px 32px; text-decoration: none; border-radius: 10px; font-weight: bold; font-size: 16px; display: inline-block; box-shadow: 0 10px 15px -3px rgba(88, 18, 32, 0.3);">
             Restablecer Contraseña
           </a>
         </div>
@@ -135,7 +139,7 @@ export const emailService = {
     return this.send({
       to: email,
       toName: nombres,
-      subject: 'Recuperación de Contraseña - Club Gema',
+      subject: 'Recuperación de Contraseña - Imperio 7',
       htmlContent,
     });
   },
@@ -154,26 +158,26 @@ export const emailService = {
 
     const htmlContent = buildBaseTemplate(`
       <div style="padding: 40px 30px;">
-        <h2 style="color: #1e293b; margin-top: 0; font-size: 22px;">¡Hola, ${nombres}!</h2>
+        <h2 style="color: #0C0608; margin-top: 0; font-size: 22px;">¡Hola, ${nombres}!</h2>
         <p style="color: #475569; line-height: 1.6; font-size: 15px;">
-          Es un gusto darte la bienvenida a nuestra familia. Tu registro como <strong>Alumno</strong> se ha completado con éxito. 
+          Es un gusto darte la bienvenida a <strong>Imperio 7</strong>. Tu registro como <strong>Alumno</strong> se ha completado con éxito. 
           A continuación, encontrarás tus credenciales para acceder a nuestra plataforma:
         </p>
 
-        <div style="background-color: #f8fafc; border: 2px dashed #cbd5e1; border-radius: 12px; padding: 25px; margin: 30px 0; text-align: center;">
+        <div style="background-color: #FCF8ED; border: 2px dashed #D4AF37; border-radius: 12px; padding: 25px; margin: 30px 0; text-align: center;">
           <div style="margin-bottom: 15px;">
             <span style="display: block; color: #64748b; font-size: 12px; text-transform: uppercase; font-weight: bold; margin-bottom: 4px;">Nombre de usuario</span>
-            <span style="color: #1e3a8a; font-size: 18px; font-weight: bold;">${username}</span>
+            <span style="color: #581220; font-size: 18px; font-weight: bold;">${username}</span>
           </div>
           <div>
             <span style="display: block; color: #64748b; font-size: 12px; text-transform: uppercase; font-weight: bold; margin-bottom: 4px;">Contraseña inicial</span>
-            <span style="color: #1e3a8a; font-size: 18px; font-weight: bold;">${password ?? username}</span>
-            <small style="display: block; color: #f97316; font-size: 11px; margin-top: 4px;">(Corresponde a tu nombre de usuario autogenerado)</small>
+            <span style="color: #581220; font-size: 18px; font-weight: bold;">${password ?? username}</span>
+            <small style="display: block; color: #A67C1E; font-size: 11px; margin-top: 4px;">(Corresponde a tu nombre de usuario autogenerado)</small>
           </div>
         </div>
 
         <div style="text-align: center; margin-top: 35px;">
-          <a href="${loginLink}" style="background-color: #f97316; color: #ffffff; padding: 16px 32px; text-decoration: none; border-radius: 10px; font-weight: bold; font-size: 16px; display: inline-block; box-shadow: 0 10px 15px -3px rgba(249, 115, 22, 0.3);">
+          <a href="${loginLink}" style="background: linear-gradient(135deg, #581220 0%, #7A1A2E 100%); color: #ffffff; border: 1px solid #D4AF37; padding: 16px 32px; text-decoration: none; border-radius: 10px; font-weight: bold; font-size: 16px; display: inline-block; box-shadow: 0 10px 15px -3px rgba(88, 18, 32, 0.3);">
             Ingresar a la Plataforma
           </a>
         </div>
@@ -187,7 +191,7 @@ export const emailService = {
     return this.send({
       to: email,
       toName: nombres,
-      subject: '¡Bienvenido a Club Gema! 🏐 Tus credenciales',
+      subject: '¡Bienvenido a Imperio 7! 🏐 Tus credenciales',
       htmlContent,
     });
   },
@@ -201,9 +205,9 @@ export const emailService = {
   async sendBirthdayEmail(email, nombres) {
     const htmlContent = buildBaseTemplate(`
       <div style="padding: 40px 30px; text-align: center;">
-        <h2 style="color: #1e293b; margin-top: 0; font-size: 24px;">¡Feliz Cumpleaños, ${nombres}! 🎉</h2>
+        <h2 style="color: #581220; margin-top: 0; font-size: 24px;">¡Feliz Cumpleaños, ${nombres}! 🎉</h2>
         <p style="color: #475569; line-height: 1.6; font-size: 16px;">
-          De parte de toda la familia de Club Gema queremos desearte un día lleno de alegría y éxito.
+          De parte de toda la familia de <strong>Imperio 7</strong> queremos desearte un día lleno de alegría, honor y éxito.
         </p>
         <div style="font-size: 50px; margin: 20px 0;">🎂 🏐</div>
         <p style="color: #475569; line-height: 1.6; font-size: 16px;">
@@ -215,7 +219,7 @@ export const emailService = {
     return this.send({
       to: email,
       toName: nombres,
-      subject: '¡Feliz Cumpleaños! 🎉🎂 - Club Gema',
+      subject: '¡Feliz Cumpleaños! 🎉🎂 - Imperio 7',
       htmlContent,
     });
   },
@@ -229,16 +233,16 @@ export const emailService = {
   async sendPartialPaymentReminder(email, nombres) {
     const htmlContent = buildBaseTemplate(`
       <div style="padding: 30px;">
-        <h2 style="color: #1e293b; margin-top: 0; font-size: 20px;">Hola, ${nombres}</h2>
+        <h2 style="color: #0C0608; margin-top: 0; font-size: 20px;">Hola, ${nombres}</h2>
         <p style="color: #475569; line-height: 1.6; font-size: 15px;">
-          Te recordamos amablemente que tienes un <strong>saldo pendiente (pago parcial)</strong> en tu mensualidad de Club Gema.
+          Te recordamos amablemente que tienes un <strong>saldo pendiente (pago parcial)</strong> en tu mensualidad de <strong>Imperio 7</strong>.
         </p>
         <p style="color: #475569; line-height: 1.6; font-size: 15px;">
           Para evitar la suspensión de tus accesos o pérdida de beneficios de alumno antiguo, por favor regularízalo antes del cierre de tu ciclo de facturación.
         </p>
         
-        <div style="background-color: #fffbeb; border-left: 4px solid #f59e0b; padding: 15px; margin: 25px 0;">
-          <p style="color: #92400e; margin: 0; font-size: 14px;">
+        <div style="background-color: #FCF8ED; border-left: 4px solid #D4AF37; padding: 15px; margin: 25px 0;">
+          <p style="color: #A67C1E; margin: 0; font-size: 14px;">
             Si ya regularizaste tu pago en las últimas horas, por favor haz caso omiso a este mensaje.
           </p>
         </div>
@@ -248,7 +252,7 @@ export const emailService = {
     return this.send({
       to: email,
       toName: nombres,
-      subject: 'Aviso Importante: Saldo Pendiente - Club Gema',
+      subject: 'Aviso Importante: Saldo Pendiente - Imperio 7',
       htmlContent,
     });
   },
