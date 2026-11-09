@@ -81,7 +81,7 @@ class CumpleanosService {
             wpEnviado = wpResultado.success;
           } else {
             // Plan de Respaldo por si falla el código de Twilio
-            const mensaje = `¡Hola ${usuario.nombres}! 🎉 En Club GEMA celebramos contigo este día especial 🎈🎂🥳. Que sea un año lleno de logros y grandes historias para disfrutar. 👉 ¡Nos vemos en cancha para seguir creciendo juntos! 💪✨`;
+            const mensaje = `¡Hola ${usuario.nombres}! 🎉 En Imperio 7 celebramos contigo este día especial 🎈🎂🥳. Que sea un año lleno de logros y grandes historias para disfrutar. 👉 ¡Nos vemos en cancha para seguir creciendo juntos! 💪✨`;
             const wpResultado = await twilioProvider.sendWhatsAppMessage(usuario.telefono_personal, mensaje);
             wpEnviado = wpResultado.success;
           }
