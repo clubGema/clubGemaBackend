@@ -325,12 +325,12 @@ export const ajusteFechaService = {
       });
 
       const ids = ctx.inscripciones.map(i => i.id);
-      const ultimaFecha = await fechaUltimaClase(ids);
+      const ultimaFecha = await fechaUltimaClase(ids, { tx });
       await tx.inscripciones_deudas_link.updateMany({
         where: { cuenta_id: cuentaId },
         data: esInd
-          ? { fecha_inicio_ciclo: fechaTs, fecha_fin_ciclo: ultimaFecha }
-          : { fecha_inicio_ciclo: fechaTs },
+          ? { fecha_inicio_ciclo: fechaTs, fecha_fin_ciclo: fechaTs }
+          : { fecha_inicio_ciclo: fechaTs, fecha_fin_ciclo: ultimaFecha },
       });
 
       // 6. Auditoría

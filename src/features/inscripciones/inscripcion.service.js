@@ -877,7 +877,7 @@ export const inscripcionService = {
         }
       })
 
-      const ultimaFecha = await fechaUltimaClase([createdInsc.id]);
+      const ultimaFecha = await fechaUltimaClase([createdInsc.id], { tx });
 
       const nuevoLink = await tx.inscripciones_deudas_link.create({
         data: {
@@ -998,10 +998,12 @@ export const inscripcionService = {
         }
       });
 
+      const ultimaFecha = await fechaUltimaClase(idsInscripciones, { tx })
+
       // 🚩 NUEVO: sincroniza el link con la fecha real ya confirmada
       await tx.inscripciones_deudas_link.updateMany({
         where: { cuenta_id: Number.parseInt(cuentaId) },
-        data: { fecha_inicio_ciclo: fechaFormateada }
+        data: { fecha_inicio_ciclo: fechaFormateada, fecha_fin_ciclo: ultimaFecha }
       });
 
       return { success: true, count: idsInscripciones.length, nueva_fecha: fechaFormateada };
