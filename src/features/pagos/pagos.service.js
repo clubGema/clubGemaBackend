@@ -568,6 +568,9 @@ export const pagosService = {
                     }
                   }
                 }
+              },
+              orderBy: {
+                id: 'desc'
               }
             }
           }

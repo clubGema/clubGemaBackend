@@ -11,18 +11,14 @@ class RecuperacionCronService {
 
     const pendientes = await prisma.recuperaciones.findMany({
       where: { estado: 'PENDIENTE', es_por_lesion: false },
-      select: { id: true, alumno_id: true },
+      select: { id: true, alumno_id: true, fecha_falta: true },
     });
 
-    const finPorAlumno = new Map();
     const idsVencidos = [];
     for (const t of pendientes) {
-      if (!finPorAlumno.has(t.alumno_id)) {
-        finPorAlumno.set(t.alumno_id, await ultimaClaseRegular(prisma, t.alumno_id));
-      }
-      const fin = finPorAlumno.get(t.alumno_id);
-      if (fin) {
-        const finConTolerancia = new Date(fin);
+      const fechaFalta = t.fecha_falta;
+      if (fechaFalta) {
+        const finConTolerancia = new Date(fechaFalta);
         finConTolerancia.setUTCDate(finConTolerancia.getUTCDate() + 30);
         if (finConTolerancia < hoy) idsVencidos.push(t.id);
       }

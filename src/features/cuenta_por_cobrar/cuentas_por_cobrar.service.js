@@ -374,7 +374,7 @@ export const CuentasPorCobrarService = {
       const partesPorSlot = repartirMonto(montoTotal, paqueteActual.length);
 
       const paqueteIds = paqueteActual.map(i => i.id);
-      const ultimaFecha = await fechaUltimaClase(paqueteIds);
+      const ultimaFecha = await fechaUltimaClase(paqueteIds, { tx });
 
       await tx.inscripciones_deudas_link.updateMany({
         where: {
@@ -466,7 +466,7 @@ export const CuentasPorCobrarService = {
       const partesPorSlot = repartirMonto(montoTotal, paqueteActual.length);
 
       const paqueteIds = paqueteActual.map(i => i.id);
-      const ultimaFecha = await fechaUltimaClase(paqueteIds);
+      const ultimaFecha = await fechaUltimaClase(paqueteIds, { tx });
 
       await tx.inscripciones_deudas_link.updateMany({
         where: {

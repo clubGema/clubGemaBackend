@@ -112,7 +112,8 @@ export const historialAcademicoService = {
 
         const esIndividual = inscripcionesInfo.some((i) => i.tipo_inscripcion === 'INDIVIDUAL');
 
-        const fecha_fin_real = links[0]?.fecha_fin_ciclo ?? null;
+        const fecha_inicio_real = links?.[0]?.fecha_inicio_ciclo ?? null;
+        const fecha_fin_real = links?.[0]?.fecha_fin_ciclo ?? null;
 
         return {
           cuenta_id: cuenta.id,
@@ -120,7 +121,7 @@ export const historialAcademicoService = {
           estado_pago: cuenta.estado,
           monto_final: Number(cuenta.monto_final),
           fecha_vencimiento_pago: cuenta.fecha_vencimiento,
-          fecha_inicio_real: todasLasFechas[0] ?? null,
+          fecha_inicio_real,
           fecha_fin_real,
           total_clases_paquete: todasLasFechas.length,
           sin_registros: todasLasFechas.length === 0,
