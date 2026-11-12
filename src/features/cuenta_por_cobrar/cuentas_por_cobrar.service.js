@@ -5,6 +5,7 @@ import timezone from 'dayjs/plugin/timezone.js';
 import crypto from 'crypto';
 import { merchService } from '../merch/merch.service.js';
 import { detectarRegimenAlumno } from '../inscripciones/logic/inscripcion.logic.js';
+import { resolverPlanPorRegimen } from '../inscripciones/utils/plan-catalogo.util.js';
 import * as Validators from '../inscripciones/validators/inscripcion.validator.js';
 import { TZ_LIMA } from '../../shared/utils/ciclo.util.js';
 // 🎯 BL-001: una clase suelta no se renueva.
@@ -343,9 +344,7 @@ export const CuentasPorCobrarService = {
       if (paqueteActual.length === 0) throw new Error("No hay horarios activos.");
 
       const esLegacy = await detectarRegimenAlumno(tx, paqueteActual[0].alumno_id)
-      const conceptoPaquete = await tx.catalogo_conceptos.findFirst({
-        where: { cantidad_clases_semanal: paqueteActual.length, activo: true, es_vigente: !esLegacy }
-      });
+      const conceptoPaquete = await resolverPlanPorRegimen(tx, paqueteActual.length, esLegacy);
 
       // 🛡️ BL-002: sin esta guarda, la línea siguiente reventaba con un
       // `TypeError: Cannot read properties of undefined` en vez de decir qué
@@ -440,9 +439,7 @@ export const CuentasPorCobrarService = {
       }
 
       const esLegacy = await detectarRegimenAlumno(tx, paqueteActual[0].alumno_id);
-      const conceptoPaquete = await tx.catalogo_conceptos.findFirst({
-        where: { cantidad_clases_semanal: paqueteActual.length, activo: true, es_vigente: !esLegacy }
-      });
+      const conceptoPaquete = await resolverPlanPorRegimen(tx, paqueteActual.length, esLegacy);
 
       if (!conceptoPaquete) throw new Error(`⛔ No existe un plan para ${paqueteActual.length} clases en el catálogo.`);
 

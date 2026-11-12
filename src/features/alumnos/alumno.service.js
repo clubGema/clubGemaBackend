@@ -332,4 +332,10 @@ export const alumnoService = {
     await prisma.alumnos_contactos.delete({ where: { id: contactoId } });
   },
 
+  verificarAntiguedad: async (usuarioId) => {
+    const alumno = await prisma.alumnos.findUnique({ where: { usuario_id: usuarioId } });
+    if (!alumno) throw new ApiError('El alumno no existe.', 404);
+    if (alumno.historial === 'Antiguo') return true;
+    return false;
+  }
 };

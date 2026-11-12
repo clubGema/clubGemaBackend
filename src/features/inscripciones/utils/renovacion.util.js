@@ -23,10 +23,10 @@ export const existeInscripcionEquivalente = (horarioIdsHistoricos, inscripciones
  * Concepto vigente equivalente: entre los candidatos (activo + es_vigente) con
  * la misma cantidad de clases/semana, prefiere el mismo codigo_interno.
  */
-export const elegirConceptoVigente = (candidatos, conceptoHistorico, cantidadClases) => {
+export const elegirConceptoVigente = (candidatos, conceptoHistorico, cantidadClases, { esLegacy = false } = {}) => {
   const cantidad = cantidadClases ?? conceptoHistorico?.cantidad_clases_semanal;
   const validos = (candidatos ?? []).filter(
-    (c) => c.activo && c.es_vigente && c.cantidad_clases_semanal === cantidad
+    (c) => c.activo && Boolean(c.es_vigente) === !esLegacy && c.cantidad_clases_semanal === cantidad
   );
   if (validos.length === 0) return null;
   return validos.find((c) => conceptoHistorico && c.codigo_interno === conceptoHistorico.codigo_interno) ?? validos[0];

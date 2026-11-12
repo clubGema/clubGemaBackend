@@ -40,21 +40,21 @@ router.get('/mi-perfil', alumnoController.obtenerMiPerfil);
 router.patch('/mi-perfil', validate(actualizarPerfilSchema), alumnoController.actualizarMiPerfil);
 
 router.get(
-    '/gestion/resumen-cortes',
-    authorize('Administrador', 'Coordinador'),
-    alumnoController.listarAlumnosResumen
+  '/gestion/resumen-cortes',
+  authorize('Administrador', 'Coordinador'),
+  alumnoController.listarAlumnosResumen
 );
 
 router.get(
-    '/gestion/cortes-alumnos',
-    authorize('Administrador', 'Coordinador'),
-    alumnoController.listarAlumnosResumenPorCoordinador
+  '/gestion/cortes-alumnos',
+  authorize('Administrador', 'Coordinador'),
+  alumnoController.listarAlumnosResumenPorCoordinador
 );
 
 router.post(
-    '/gestion/cambiar-historial',
-    authorize('Administrador'),
-    alumnoController.cambiarHistorialAlumno
+  '/gestion/cambiar-historial',
+  authorize('Administrador'),
+  alumnoController.cambiarHistorialAlumno
 )
 
 // ==========================================================================
@@ -67,11 +67,17 @@ router.post(
 // hace el controller.
 // ==========================================================================
 router.patch(
-    '/:id/contacto-emergencia',
-    authorize('Administrador', 'Coordinador', 'Alumno'),
-    validateParams(commonUsuarioSchemas.idParamSchema),
-    validate(actualizarContactoEmergenciaSchema),
-    alumnoController.actualizarContactoEmergencia
+  '/:id/contacto-emergencia',
+  authorize('Administrador', 'Coordinador', 'Alumno'),
+  validateParams(commonUsuarioSchemas.idParamSchema),
+  validate(actualizarContactoEmergenciaSchema),
+  alumnoController.actualizarContactoEmergencia
 );
+
+router.get(
+  '/verificar-antiguedad',
+  authorize('Alumno'),
+  alumnoController.verificarAntiguedad
+)
 
 export default router;

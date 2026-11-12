@@ -1,5 +1,6 @@
 import { prisma } from '../../config/database.config.js';
 import { ApiError } from '../../shared/utils/error.util.js';
+import { alumnoService } from '../alumnos/alumno.service.js';
 
 export const catalogoService = {
   findAll: async () => {
@@ -11,12 +12,22 @@ export const catalogoService = {
 
   findVigentes: async () => {
     return await prisma.catalogo_conceptos.findMany({
-      where: { 
+      where: {
         activo: true,
-        es_vigente: true 
+        es_vigente: true
       },
       orderBy: { precio_base: 'asc' },
     });
+  },
+
+  findLegacy: async () => {
+    const conceptos = await prisma.catalogo_conceptos.findMany({
+      where: {
+        activo: true,
+      },
+      orderBy: { precio_base: 'asc' },
+    });
+    return conceptos.filter(c => c.codigo_interno.toLowerCase().includes("legacy"))
   },
 
   findOne: async (id) => {

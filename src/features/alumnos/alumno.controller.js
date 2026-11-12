@@ -104,4 +104,12 @@ export const alumnoController = {
     await alumnoService.eliminarContacto(req.user.id, contactoId);
     return apiResponse.success(res, { message: 'Contacto eliminado correctamente' });
   }),
+
+  verificarAntiguedad: catchAsync(async (req, res) => {
+    const idAlumno = Number(req.user.id);
+    if (Number.isNaN(idAlumno)) throw new ApiError('ID de alumno inválido', 400);
+
+    const esAntiguo = await alumnoService.verificarAntiguedad(idAlumno);
+    return apiResponse.success(res, { data: esAntiguo, message: 'Verificación realizada' })
+  })
 };

@@ -19,6 +19,14 @@ export const catalogoController = {
     });
   }),
 
+  getLegacy: catchAsync(async (req, res) => {
+    const data = await catalogoService.findLegacy();
+    return apiResponse.success(res, {
+      message: 'Planes Legacy obtenidos',
+      data,
+    });
+  }),
+
   getById: catchAsync(async (req, res) => {
     const data = await catalogoService.findOne(req.params.id); // req.params.id is parsed by Zod now
     return apiResponse.success(res, {

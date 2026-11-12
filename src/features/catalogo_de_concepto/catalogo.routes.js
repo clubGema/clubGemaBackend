@@ -10,6 +10,8 @@ const router = Router();
 // Ruta pública para consultar planes vigentes para el landing/precios
 router.get('/vigentes', catalogoController.getVigentes);
 
+router.get('/legacy', catalogoController.getLegacy);
+
 // Todas las rutas del catálogo requieren autenticación mínima
 router.use(authenticate);
 

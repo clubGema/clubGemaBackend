@@ -30,6 +30,31 @@ export const validarMuroDeDeuda = async (tx, alumnoId) => {
 };
 
 /**
+ * El alumno no puede inscribirse a un horario que ya tiene en curso
+ * (ACTIVO, PENDIENTE_PAGO, POR_VALIDAR o VENCIDO, tipo REGULAR).
+ * `detectarYaEnCurso` es horariosYaEnCurso (se inyecta para mantener este
+ * archivo sin dependencias nuevas).
+ */
+export const validarHorariosNoDuplicados = async (tx, alumnoId, horarioIds, detectarYaEnCurso) => {
+  const enCurso = await tx.inscripciones.findMany({
+    where: {
+      alumno_id: Number.parseInt(alumnoId),
+      horario_id: { in: (horarioIds ?? []).map(Number) },
+      estado: { in: ['ACTIVO', 'PENDIENTE_PAGO', 'POR_VALIDAR', 'VENCIDO'] },
+      OR: [{ tipo_inscripcion: 'REGULAR' }, { tipo_inscripcion: null }],
+    },
+    select: { horario_id: true },
+  });
+  const repetidos = detectarYaEnCurso(horarioIds, enCurso);
+  if (repetidos.length > 0) {
+    throw new Error(
+      `⛔ Ya tienes una inscripción en curso en ${repetidos.length === 1 ? 'el horario' : 'los horarios'} ${repetidos.join(', ')}. ` +
+      'Tu siguiente ciclo se renueva automáticamente: no hace falta inscribirte de nuevo.'
+    );
+  }
+};
+
+/**
  * Valida si un horario específico tiene cupos disponibles considerando inscripciones activas y temporales.
  */
 export const validarAforoHorario = async (tx, idHorario, fechaLimiteZombie) => {
