@@ -83,12 +83,14 @@ export const historialAcademicoService = {
           const fechas = insc.registros_asistencia.map((r) => r.fecha);
           todasLasFechas = todasLasFechas.concat(fechas);
 
-          const horarioKey = `${hc?.dia_semana}-${hc?.hora_inicio}`;
+          const sedeNombre = hc?.canchas?.sedes?.nombre || 'S/D';
+          const horarioKey = `${hc?.dia_semana}-${hc?.hora_inicio}-${sedeNombre}`;
           if (hc && !horariosUnicos.has(horarioKey)) {
             horariosUnicos.set(horarioKey, {
               dia: MAPA_DIAS[hc.dia_semana] ?? 'S/D',
               hora_inicio: formatTime(hc.hora_inicio),
               hora_fin: formatTime(hc.hora_fin),
+              sede: sedeNombre,
             });
           }
 
@@ -96,7 +98,7 @@ export const historialAcademicoService = {
             inscripcion_id: insc.id,
             estado: insc.estado,
             tipo_inscripcion: insc.tipo_inscripcion,
-            sede: hc?.canchas?.sedes?.nombre || 'S/D',
+            sede: sedeNombre,
             nivel: hc?.niveles_entrenamiento?.nombre || 'S/D',
             profesor: hc?.coordinadores?.usuarios?.nombres || 'S/D',
             total_clases: fechas.length,
@@ -110,7 +112,7 @@ export const historialAcademicoService = {
 
         const esIndividual = inscripcionesInfo.some((i) => i.tipo_inscripcion === 'INDIVIDUAL');
 
-        const fecha_fin_real = links[0].fecha_fin_ciclo
+        const fecha_fin_real = links[0]?.fecha_fin_ciclo ?? null;
 
         return {
           cuenta_id: cuenta.id,
@@ -270,7 +272,7 @@ export const historialAcademicoService = {
         // --- Misma prioridad que antes: vigentes > activas-vencidas > última ---
         const inscripcionesActivas = inscripcionesDeSede.filter((i) => i.estado === 'ACTIVO');
         const inscripcionesConCorte = inscripcionesActivas.map((i) => {
-          const fechaCorte = i.inscripciones_deudas_link[0].fecha_fin_ciclo;
+          const fechaCorte = i.inscripciones_deudas_link?.[0]?.fecha_fin_ciclo ?? null;
           return { ...i, __fechaCorte: fechaCorte, __vencida: estaVencida(fechaCorte) };
         });
         const inscripcionesVigentes = inscripcionesConCorte.filter((i) => !i.__vencida);

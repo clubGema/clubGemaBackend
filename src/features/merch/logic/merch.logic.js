@@ -4,6 +4,28 @@ import { aCentimos, aMonto, redondear2 } from '../../../shared/utils/dinero.util
 export const ESTADO_MERCH = { ACTIVO: 'ACTIVO', INACTIVO: 'INACTIVO' };
 
 /**
+ * Datos por defecto para auto-crear las Camisetas Oficiales por talla si aún no existen en la BD.
+ */
+export const CAMISETAS_DEFAULT = ['S', 'M', 'L', 'XL'].map((talla) => ({
+  nombre: `Camiseta Oficial Imperio 7 - Talla ${talla}`,
+  descripcion: 'Camiseta técnica transpirable de entrenamiento con escudo oficial del club.',
+  precio: 45,
+  stock: 50,
+  estado: ESTADO_MERCH.ACTIVO,
+}));
+
+export const CAMISETA_DEFAULT = CAMISETAS_DEFAULT[2]; // Talla L por compatibilidad
+
+/**
+ * Identifica automáticamente por nombre si un producto es una camiseta/polo oficial.
+ * Estos productos tienen prioridad de venta y no se bloquean por límite de stock.
+ */
+export function esProductoCamiseta(itemONombre) {
+  const nombre = typeof itemONombre === 'string' ? itemONombre : itemONombre?.nombre;
+  return /\b(camiseta|polo)\b/i.test(String(nombre ?? ''));
+}
+
+/**
  * Ciclo de un ítem:
  *   RESERVADO (sin pagar) -> POR_ENTREGAR (pagado) -> LISTO_PARA_RECOJO (en la sede) -> ENTREGADO
  * Aparte: PERDIDO y DEVUELTO. POSEE es legacy (equivale a ENTREGADO): se lee, ya no se escribe.
@@ -140,6 +162,7 @@ export function agruparMerchIds(merchIds) {
  * Cruza lo pedido con el catálogo y valida existencia, estado y stock.
  * `catalogo` son filas de `merch` (cualquier subconjunto que incluya los pedidos).
  * Devuelve líneas con el precio ya congelado y el total en 2 decimales.
+ * Nota: la camiseta/polo oficial no se bloquea por falta de stock.
  */
 export function construirLineas(pedido, catalogo) {
   const porId = new Map(catalogo.map((m) => [m.id, m]));
@@ -152,7 +175,8 @@ export function construirLineas(pedido, catalogo) {
     if (producto.estado !== ESTADO_MERCH.ACTIVO) {
       throw new ApiError(`⛔ "${producto.nombre}" no está disponible.`, 409);
     }
-    if (producto.stock < cantidad) {
+    const sinLimiteStock = esProductoCamiseta(producto);
+    if (!sinLimiteStock && producto.stock < cantidad) {
       throw new ApiError(
         `⛔ Stock insuficiente de "${producto.nombre}": quedan ${producto.stock}, se pidieron ${cantidad}.`,
         409
@@ -166,6 +190,7 @@ export function construirLineas(pedido, catalogo) {
       cantidad,
       precio_unitario: precio,
       subtotal: aMonto(aCentimos(precio) * cantidad),
+      sin_limite_stock: sinLimiteStock,
     };
   });
 

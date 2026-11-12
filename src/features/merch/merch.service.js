@@ -10,6 +10,7 @@ dayjs.extend(utc);
 dayjs.extend(timezone);
 const TZ_LIMA = 'America/Lima';
 import {
+  CAMISETAS_DEFAULT,
   CONCEPTO_INGRESO,
   calcularSplitIngresos,
   ESTADOS_PAGADOS,
@@ -22,6 +23,7 @@ import {
   armarAvisoListo,
   construirLineas,
   detalleMerch,
+  esProductoCamiseta,
   esSaldoCompleto,
   filasAlumnoMerch,
   filtroBusquedaAlumno,
@@ -105,9 +107,86 @@ const validarSedeRecojo = async (db, sedeId, { obligatoria }) => {
 };
 
 /**
+ * Garantiza que existan las tallas estándar (S, M, L, XL) de la camiseta oficial en el catálogo.
+ * Si ya existe alguna camiseta en la BD, toma su nombre base, descripción, precio e imagen
+ * para crear automáticamente las tallas faltantes; si no existe ninguna, crea las 4 por defecto.
+ */
+const TALLAS_ESTANDAR = ['S', 'M', 'L', 'XL'];
+let camisetasInicializadasEnBD = false;
+
+const asegurarCamisetaEnCatalogo = async (db = prisma) => {
+  if (camisetasInicializadasEnBD && db === prisma) return;
+
+  const todos = await db.merch.findMany();
+  const camisetas = todos.filter((p) => esProductoCamiseta(p));
+
+  if (camisetas.length === 0) {
+    await db.merch.createMany({ data: CAMISETAS_DEFAULT });
+    if (db === prisma) camisetasInicializadasEnBD = true;
+    return;
+  }
+
+  // Limpiar URLs demo de Unsplash y estandarizar el nombre "Camiseta Oficial Imperio 7" si aún tienen los del seed viejo
+  for (const c of camisetas) {
+    const esUnsplash = /images\.unsplash\.com/i.test(String(c.imagen_url || ''));
+    const tieneNombreAntiguo = /academia\s+gema|oficial\s+gema/i.test(String(c.nombre || ''));
+    const matchTalla = String(c.nombre || '').match(/\btalla\s+([a-z0-9]+)\b/i);
+
+    if (esUnsplash || tieneNombreAntiguo) {
+      const talla = matchTalla ? matchTalla[1].toUpperCase() : 'L';
+      await db.merch.update({
+        where: { id: c.id },
+        data: {
+          ...(tieneNombreAntiguo && { nombre: `Camiseta Oficial Imperio 7 - Talla ${talla}` }),
+          ...(esUnsplash && { imagen_url: null, imagen_public_id: null }),
+          actualizado_en: new Date(),
+        },
+      });
+      if (tieneNombreAntiguo) c.nombre = `Camiseta Oficial Imperio 7 - Talla ${talla}`;
+      if (esUnsplash) c.imagen_url = null;
+    }
+  }
+
+  // Tomamos una camiseta existente como plantilla solo si falta crear alguna de las 4 tallas en la BD
+  const plantilla = camisetas.find((c) => c.estado === ESTADO_MERCH.ACTIVO) || camisetas[0];
+  const nombreBase = String(plantilla.nombre || 'Camiseta Oficial Imperio 7')
+    .replace(/\s*-\s*talla\s+[a-z0-9]+/i, '')
+    .replace(/\btalla\s+[a-z0-9]+/i, '')
+    .trim();
+
+  const tallasExistentes = new Set();
+  for (const c of camisetas) {
+    const match = String(c.nombre || '').match(/\btalla\s+([a-z0-9]+)\b/i);
+    if (match) tallasExistentes.add(match[1].toUpperCase());
+  }
+
+  const faltantes = TALLAS_ESTANDAR.filter((t) => !tallasExistentes.has(t));
+  if (faltantes.length > 0) {
+    const imagenPlantilla =
+      plantilla.imagen_url && !/images\.unsplash\.com/i.test(plantilla.imagen_url)
+        ? plantilla.imagen_url
+        : null;
+    await db.merch.createMany({
+      data: faltantes.map((talla) => ({
+        nombre: `${nombreBase} - Talla ${talla}`,
+        descripcion: plantilla.descripcion || CAMISETAS_DEFAULT[0].descripcion,
+        precio: plantilla.precio ?? 45,
+        imagen_url: imagenPlantilla,
+        imagen_public_id: null,
+        stock: 50,
+        estado: ESTADO_MERCH.ACTIVO,
+      })),
+    });
+  }
+
+  if (db === prisma) camisetasInicializadasEnBD = true;
+};
+
+/**
  * Valida los ítems pedidos contra el catálogo y descuenta el stock de forma
  * atómica (updateMany condicionado: dos compras simultáneas no pueden dejar el
- * stock en negativo). Devuelve las líneas con precio congelado y el total.
+ * stock en negativo). Para la camiseta/polo oficial el stock no limita la venta.
+ * Devuelve las líneas con precio congelado y el total.
  */
 const validarYDescontarStock = async (tx, merchIds) => {
   const pedido = agruparMerchIds(merchIds);
@@ -118,9 +197,29 @@ const validarYDescontarStock = async (tx, merchIds) => {
   const catalogo = await tx.merch.findMany({
     where: { id: { in: pedido.map((p) => p.merch_id) } },
   });
+  const porId = new Map(catalogo.map((m) => [m.id, m]));
   const { lineas, total } = construirLineas(pedido, catalogo);
 
   for (const linea of lineas) {
+    if (linea.sin_limite_stock) {
+      const actual = porId.get(linea.merch_id);
+      if (!actual || actual.estado !== ESTADO_MERCH.ACTIVO) {
+        throw new ApiError(`⛔ "${linea.nombre}" no está disponible.`, 409);
+      }
+      const descuentoPosible = Math.min(Math.max(0, Number(actual.stock) || 0), linea.cantidad);
+      if (descuentoPosible > 0) {
+        await tx.merch.updateMany({
+          where: {
+            id: linea.merch_id,
+            estado: ESTADO_MERCH.ACTIVO,
+            stock: { gte: descuentoPosible },
+          },
+          data: { stock: { decrement: descuentoPosible }, actualizado_en: new Date() },
+        });
+      }
+      continue;
+    }
+
     const { count } = await tx.merch.updateMany({
       where: {
         id: linea.merch_id,
@@ -140,6 +239,7 @@ const validarYDescontarStock = async (tx, merchIds) => {
 export const merchService = {
   // ---------------------------------------------------------------- Catálogo
   listarCatalogo: async ({ incluirInactivos = false } = {}) => {
+    await asegurarCamisetaEnCatalogo(prisma);
     return prisma.merch.findMany({
       where: incluirInactivos ? {} : { estado: ESTADO_MERCH.ACTIVO },
       orderBy: { nombre: 'asc' },
@@ -227,6 +327,13 @@ export const merchService = {
       select: { id: true, nombre: true, imagen_public_id: true },
     });
     if (!producto) throw new ApiError('El producto de merch no existe.', 404);
+
+    if (esProductoCamiseta(producto)) {
+      throw new ApiError(
+        `⛔ "${producto.nombre}" es un producto fijo del flujo de inscripción y no se puede eliminar. Puedes editar su precio o imagen si lo necesitas.`,
+        409
+      );
+    }
 
     const ventas = await db.alumno_merch.count({ where: { merch_id: producto.id } });
     if (ventas > 0) {

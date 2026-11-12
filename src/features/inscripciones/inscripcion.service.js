@@ -1625,20 +1625,10 @@ function filaCiclo(inscripcion, link, numeroMesCiclo) {
 // Fila de una inscripción que todavía no generó cuenta por cobrar.
 // 🔧 BL-011: mismo juego de llaves que filaCiclo — antes esta rama omitía
 // es_estimado y metía un Timestamp(6) crudo en fecha_inicio_ciclo.
-async function filaSinCuenta(inscripcion) {
+function filaSinCuenta(inscripcion) {
   const inicio = aFechaUTC(inscripcion.fecha_inscripcion);
-
-  const inscReciente = await prisma.inscripciones_deudas_link.findFirst({
-    where: {
-      inscripcion_id: inscripcion.id,
-    },
-    orderBy: {
-      id: 'desc'
-    }
-  });
-  const fin = aFechaUTC(inscReciente?.fecha_fin_ciclo);
-
-  const corte = aFechaUTC(inscReciente?.fecha_fin_ciclo);
+  const fin = null;
+  const corte = null;
 
   return {
     ...datosInscripcion(inscripcion),

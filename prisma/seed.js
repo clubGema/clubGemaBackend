@@ -275,8 +275,13 @@ async function main() {
 
   // Catálogo base de Merch (reemplaza el antiguo flag "incluye_camiseta")
   const merchBase = [
-    { nombre: 'Camiseta Oficial Gema', descripcion: 'Camiseta oficial de la academia', precio: 50, stock: 50 },
-    { nombre: 'Gorra Gema', descripcion: 'Gorra con logo bordado', precio: 30, stock: 30 },
+    ...['S', 'M', 'L', 'XL'].map((talla) => ({
+      nombre: `Camiseta Oficial Imperio 7 - Talla ${talla}`,
+      descripcion: 'Camiseta técnica transpirable de entrenamiento con escudo oficial del club.',
+      precio: 45,
+      stock: 50,
+    })),
+    { nombre: 'Gorra Imperio 7', descripcion: 'Gorra con logo bordado', precio: 35, stock: 30 },
   ];
   for (const m of merchBase) {
     const existe = await prisma.merch.findFirst({ where: { nombre: m.nombre } });

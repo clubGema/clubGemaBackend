@@ -444,7 +444,7 @@ export const pagosService = {
           : `Tu pago fue rechazado. Revisa tus observaciones.`,
         tipo: esAprobado ? 'SUCCESS' : 'DANGER',
         categoria: 'PAGOS',
-      });
+      }, tx);
 
       return {
         resultado: Utils.generarMensajeResultado(accion, esPagoCompleto, saldoRestante),
