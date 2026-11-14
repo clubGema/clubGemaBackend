@@ -240,6 +240,45 @@ export const inscripcionService = {
         });
         montoActualizado = montoFinal;
 
+        // 🐛 FIX descuento 100%: con total 0 cerrarCuentaConMerch deja la cuenta
+        // PAGADA, pero las inscripciones quedaban en PENDIENTE_PAGO sin ningún
+        // pago: el alumno no veía pantalla de pago, el admin no tenía nada que
+        // aprobar y la reserva quedaba "al aire". Ahora se registra un pago de
+        // S/ 0 y se aprueba con el MISMO flujo de validación (activa las
+        // inscripciones y genera las clases), a nombre del admin que asignó el
+        // beneficio.
+        let activadoPorBeca = false;
+        const adminBeneficio = beneficiosEnCola.find(b => b.asignado_por)?.asignado_por;
+        if (montoActualizado <= 0.01 && adminBeneficio) {
+          await tx.cuentas_por_cobrar.update({
+            where: { id: nuevaCuenta.id },
+            data: { estado: 'POR_VALIDAR', actualizado_en: new Date() }
+          });
+          await tx.inscripciones.updateMany({
+            where: { id: { in: ids }, estado: 'PENDIENTE_PAGO' },
+            data: { estado: 'POR_VALIDAR', actualizado_en: new Date() }
+          });
+          const metodo = await tx.metodos_pago.findFirst({ where: { activo: true }, orderBy: { id: 'asc' } });
+          const pagoBeca = await tx.pagos.create({
+            data: {
+              tipo_transaccion: await merchService.tipoTransaccionDeCuenta(tx, nuevaCuenta.id),
+              cuenta_id: nuevaCuenta.id,
+              metodo_pago_id: metodo.id,
+              monto_pagado: 0,
+              codigo_operacion: 'DESCUENTO 100%',
+              estado_validacion: 'PENDIENTE',
+              fecha_pago: new Date(),
+            }
+          });
+          await pagosService.validarPago({
+            pago_id: pagoBeca.id,
+            accion: 'APROBAR',
+            usuario_admin_id: adminBeneficio,
+            notas: 'Aprobado automáticamente: descuento del 100%',
+          }, tx);
+          activadoPorBeca = true;
+        }
+
         // 🔔 PASO 8: NOTIFICACIÓN
         await tx.notificaciones.create({
           data: {
@@ -255,6 +294,8 @@ export const inscripcionService = {
           mensaje: 'Inscripción procesada exitosamente.',
           total_a_pagar: montoActualizado,
           cuenta_id: nuevaCuenta.id,
+          // true = descuento 100%: ya quedó ACTIVO, no hay pantalla de pago.
+          activado_sin_pago: activadoPorBeca,
           inscripciones: inscripcionesCreadas,
           meses_adelantados: meses,
           cantidad_clases: clasesPorHorario,
