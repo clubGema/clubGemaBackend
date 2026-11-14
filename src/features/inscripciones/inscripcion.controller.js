@@ -79,6 +79,18 @@ export const inscripcionController = {
       });
 
     } catch (error) {
+      // 0. 🐛 FIX: los errores de negocio con código propio (ApiError: 409 por
+      // choque con una recuperación, 400 por feriado, etc.) se devuelven tal
+      // cual. Antes caían al 500 genérico y el alumno solo veía "Error interno
+      // al procesar la inscripción", sin saber que debía elegir otra fecha.
+      if (error instanceof ApiError && error.statusCode && error.statusCode < 500) {
+        return res.status(error.statusCode).json({
+          status: 'error',
+          message: error.message,
+          ...(error.details && { details: error.details }),
+        });
+      }
+
       // 1. Error de duplicado de Prisma (P2002)
       if (error.code === 'P2002') {
         return res.status(400).json({
