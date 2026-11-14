@@ -343,6 +343,14 @@ export const CuentasPorCobrarService = {
 
       if (paqueteActual.length === 0) throw new Error("No hay horarios activos.");
 
+      // 🐛 FIX deuda duplicada (ver validarSinInscripcionPendienteEnHorarios)
+      await Validators.validarSinInscripcionPendienteEnHorarios(
+        tx,
+        paqueteActual[0].alumno_id,
+        paqueteActual.map(i => i.horario_id),
+        paqueteActual.map(i => i.id)
+      );
+
       const esLegacy = await detectarRegimenAlumno(tx, paqueteActual[0].alumno_id)
       const conceptoPaquete = await resolverPlanPorRegimen(tx, paqueteActual.length, esLegacy);
 
@@ -373,14 +381,22 @@ export const CuentasPorCobrarService = {
       const partesPorSlot = repartirMonto(montoTotal, paqueteActual.length);
 
       const paqueteIds = paqueteActual.map(i => i.id);
-      const ultimaFecha = await fechaUltimaClase(paqueteIds, { tx });
+      const ultimaFechaCicloAnterior = await fechaUltimaClase(paqueteIds, { tx });
+      // 🐛 FIX fecha fin < inicio: el fin del NUEVO ciclo se calcula desde
+      // fechaInicioNueva. Antes se usaba la fecha_inscripcion vieja (aún sin
+      // actualizar), y el link nuevo heredaba el fin del ciclo anterior.
+      const ultimaFecha = await fechaUltimaClase(paqueteIds, {
+        tx,
+        omitirChoques: true,
+        fechaInicio: dayjs.tz(fechaInicioNueva, TZ_LIMA).hour(12).toDate()
+      });
 
       await tx.inscripciones_deudas_link.updateMany({
         where: {
           inscripcion_id: { in: paqueteActual.map(i => i.id) },
           fecha_fin_ciclo: null
         },
-        data: { fecha_fin_ciclo: ultimaFecha }
+        data: { fecha_fin_ciclo: ultimaFechaCicloAnterior }
       });
 
       for (let i = 0; i < paqueteActual.length; i++) {
@@ -430,6 +446,14 @@ export const CuentasPorCobrarService = {
 
       if (paqueteActual.length === 0) throw new Error("No se encontraron horarios en este paquete.");
 
+      // 🐛 FIX deuda duplicada (ver validarSinInscripcionPendienteEnHorarios)
+      await Validators.validarSinInscripcionPendienteEnHorarios(
+        tx,
+        paqueteActual[0].alumno_id,
+        paqueteActual.map(i => i.horario_id),
+        paqueteActual.map(i => i.id)
+      );
+
       // 🛡️ VALIDACIÓN DE AFORO por cada horario antes de reactivar
       const paramZ = await tx.parametros_sistema.findUnique({ where: { clave: 'TIEMPO_LIMITE_RESERVA_MIN' } });
       const fechaLimiteZombie = new Date(Date.now() - (paramZ ? parseInt(paramZ.valor) : 20) * 60 * 1000);
@@ -463,14 +487,22 @@ export const CuentasPorCobrarService = {
       const partesPorSlot = repartirMonto(montoTotal, paqueteActual.length);
 
       const paqueteIds = paqueteActual.map(i => i.id);
-      const ultimaFecha = await fechaUltimaClase(paqueteIds, { tx });
+      const ultimaFechaCicloAnterior = await fechaUltimaClase(paqueteIds, { tx });
+      // 🐛 FIX fecha fin < inicio: el fin del NUEVO ciclo se calcula desde
+      // fechaInicioNueva. Antes se usaba la fecha_inscripcion vieja (aún sin
+      // actualizar), y el link nuevo heredaba el fin del ciclo anterior.
+      const ultimaFecha = await fechaUltimaClase(paqueteIds, {
+        tx,
+        omitirChoques: true,
+        fechaInicio: dayjs.tz(fechaInicioNueva, TZ_LIMA).hour(12).toDate()
+      });
 
       await tx.inscripciones_deudas_link.updateMany({
         where: {
           inscripcion_id: { in: paqueteActual.map(i => i.id) },
           fecha_fin_ciclo: null
         },
-        data: { fecha_fin_ciclo: ultimaFecha }
+        data: { fecha_fin_ciclo: ultimaFechaCicloAnterior }
       });
 
       for (let i = 0; i < paqueteActual.length; i++) {

@@ -240,6 +240,7 @@ export const inscripcionService = {
         });
         montoActualizado = montoFinal;
 
+
         // 🔔 PASO 8: NOTIFICACIÓN
         await tx.notificaciones.create({
           data: {

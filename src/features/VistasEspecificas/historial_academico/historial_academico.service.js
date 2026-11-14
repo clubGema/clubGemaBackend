@@ -30,7 +30,13 @@ const esConceptoIndividual = (nombreConcepto, detalleAdicional) => {
 
 const estaVencida = (fechaCorte) => {
   if (!fechaCorte) return false;
-  return fechaCorte.getTime() < Date.now();
+  // 🐛 FIX: fecha_fin_ciclo es @db.Date (00:00 UTC del día de la última clase).
+  // Compararlo con Date.now() marcaba "NO RENOVADO" desde las 19:00 Lima del día
+  // ANTERIOR a la última clase, y el filtro "ACTIVO" lo ocultaba. Se compara por
+  // día calendario: vence recién cuando el día de la última clase ya pasó en Lima.
+  const diaCorte = dayjs.utc(fechaCorte).format('YYYY-MM-DD');
+  const hoyLima = dayjs().tz(TZ_LIMA).format('YYYY-MM-DD');
+  return diaCorte < hoyLima;
 };
 
 export const historialAcademicoService = {

@@ -44,6 +44,10 @@ export const pagosService = {
     const ejecutar = async (tx) => {
       // 🛡️ PASO A: VALIDAR LA DEUDA
       const deuda = await Validators.validarDeudaParaPago(tx, deuda_id);
+      // 🐛 FIX descuento 100%: un reporte de S/ 0 solo vale para una deuda de S/ 0.
+      if (parseFloat(monto) <= 0 && Number(deuda.monto_final) > 0.01) {
+        throw new Error('Ingresa un monto válido.');
+      }
       // 🔥 NUEVA REGLA: LOS UPGRADES NO ACEPTAN PAGOS PARCIALES
       const esUpgrade = deuda.detalle_adicional && deuda.detalle_adicional.includes('Upgrade');
       // Usamos una tolerancia de 0.01 céntimos por si hay problemas de redondeo en JS
