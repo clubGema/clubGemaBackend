@@ -16,11 +16,9 @@ const baseUserSchema = z.object({
     .max(50)
     .regex(/^[a-z0-9._]+$/, 'Solo letras, números, puntos y guiones bajos')
     .optional(),
-  email: z
-    .string({ required_error: 'El correo electrónico es requerido' })
-    .trim()
-    .toLowerCase()
-    .email('Email inválido'),
+  email: emptyToUndefined(
+    z.string().trim().toLowerCase().email('Email inválido')
+  ).optional().nullable(),
   password: userCommonValidation.passwordSchema,
   nombres: userCommonValidation.nameSchema,
   apellidos: userCommonValidation.nameSchema,
@@ -41,21 +39,22 @@ const baseUserSchema = z.object({
       z.number().int().positive('El ID del rol debe ser un número positivo'),
     ])
     .default('alumno'),
-  telefono_personal: z
-    .string({ required_error: 'El celular es requerido' })
-    .regex(/^\+?[0-9]{7,15}$/, 'Formato de teléfono inválido'),
-  fecha_nacimiento: z.preprocess(
-    (val) => {
-      if (typeof val === 'string' && val.trim() !== '') return val.trim().slice(0, 10);
-      if (val instanceof Date) return val.toISOString().slice(0, 10);
-      return val;
-    },
-    z
-      .string({ required_error: 'La fecha de nacimiento es requerida' })
-      .min(1, 'La fecha de nacimiento es requerida')
-      .regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato de fecha inválido (YYYY-MM-DD)')
-      .transform((val) => new Date(val))
-  ),
+  telefono_personal: emptyToUndefined(
+    z.string().regex(/^\+?[0-9]{7,15}$/, 'Formato de teléfono inválido')
+  ).optional().nullable(),
+  fecha_nacimiento: emptyToUndefined(
+    z.preprocess(
+      (val) => {
+        if (typeof val === 'string' && val.trim() !== '') return val.trim().slice(0, 10);
+        if (val instanceof Date) return val.toISOString().slice(0, 10);
+        return val;
+      },
+      z
+        .string()
+        .regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato de fecha inválido (YYYY-MM-DD)')
+        .transform((val) => new Date(val))
+    )
+  ).optional().nullable(),
   genero: emptyToUndefined(
     z
       .enum(['M', 'F', 'O'], {
