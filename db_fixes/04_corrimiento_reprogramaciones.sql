@@ -1,6 +1,6 @@
 -- Reprogramaciones masivas anteriores al fix 9060086 (07/11/2026) crearon la
 -- reposición al final del ciclo pero NO corrieron fecha_fin_ciclo del link.
--- Corrige solo inscripciones ACTIVO cuyo ciclo vigente (link más reciente)
+-- Corrige inscripciones ACTIVO o FINALIZADO (sin ciclo posterior superpuesto) cuyo ciclo vigente (link más reciente)
 -- termina antes de su reposición pendiente.
 BEGIN;
 
@@ -10,7 +10,7 @@ SELECT l.*, now() AS respaldado_en FROM inscripciones_deudas_link l WHERE false;
 WITH ultimo AS (
   SELECT DISTINCT ON (l.inscripcion_id) l.*
   FROM inscripciones_deudas_link l
-  JOIN inscripciones i ON i.id = l.inscripcion_id AND i.estado = 'ACTIVO'
+  JOIN inscripciones i ON i.id = l.inscripcion_id AND i.estado IN ('ACTIVO','FINALIZADO')
   WHERE l.fecha_inicio_ciclo IS NOT NULL
   ORDER BY l.inscripcion_id, l.creado_en DESC
 ), objetivo AS (
@@ -18,11 +18,20 @@ WITH ultimo AS (
   FROM ultimo u
   JOIN registros_asistencia a ON a.inscripcion_id = u.inscripcion_id
    AND a.reprogramacion_clase_id IS NOT NULL
-   AND a.estado = 'PENDIENTE'
+   AND a.estado IN ('PROGRAMADA','PENDIENTE','PRESENTE','FALTA')
    AND a.fecha >= u.fecha_inicio_ciclo
   JOIN reprogramaciones_clases r ON r.id = a.reprogramacion_clase_id AND r.estado = 'ACTIVO'
-  GROUP BY u.id, u.fecha_fin_ciclo
+  GROUP BY u.id, u.fecha_fin_ciclo, u.inscripcion_id, u.fecha_inicio_ciclo
   HAVING max(a.fecha) > u.fecha_fin_ciclo
+     -- No pisar un ciclo posterior del mismo alumno (renovación ya iniciada).
+     AND NOT EXISTS (
+       SELECT 1 FROM inscripciones_deudas_link l2
+       JOIN inscripciones ia ON ia.id = l2.inscripcion_id
+       JOIN inscripciones ib ON ib.id = u.inscripcion_id
+       WHERE ia.alumno_id = ib.alumno_id AND l2.id <> u.id
+         AND l2.fecha_inicio_ciclo > u.fecha_inicio_ciclo
+         AND l2.fecha_inicio_ciclo <= max(a.fecha)
+         AND ia.estado IN ('ACTIVO','FINALIZADO','PENDIENTE_PAGO','POR_VALIDAR'))
  ), destino AS (
   -- Las otras inscripciones del mismo paquete (mismo inicio de ciclo) vencen
   -- juntas, así que también se les corre la fecha de corte.
@@ -30,9 +39,10 @@ WITH ultimo AS (
   FROM objetivo o
   JOIN ultimo u ON u.id = o.link_id
   JOIN inscripciones i ON i.id = u.inscripcion_id
-  JOIN inscripciones i2 ON i2.id = u.inscripcion_id
-    OR (i.id_grupo_transaccion IS NOT NULL AND i2.id_grupo_transaccion = i.id_grupo_transaccion)
-  JOIN ultimo u2 ON u2.inscripcion_id = i2.id AND u2.fecha_inicio_ciclo = u.fecha_inicio_ciclo
+  JOIN ultimo u2 ON u2.fecha_inicio_ciclo = u.fecha_inicio_ciclo
+  JOIN inscripciones i2 ON i2.id = u2.inscripcion_id AND i2.alumno_id = i.alumno_id
+   AND (i2.id = i.id OR u2.cuenta_id = u.cuenta_id
+        OR (i.id_grupo_transaccion IS NOT NULL AND i2.id_grupo_transaccion = i.id_grupo_transaccion))
   WHERE u2.fecha_fin_ciclo < o.nuevo_fin
   ORDER BY u2.id, o.nuevo_fin DESC
 ), resp AS (
