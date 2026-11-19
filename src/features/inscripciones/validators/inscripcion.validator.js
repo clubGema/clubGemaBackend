@@ -171,7 +171,7 @@ export const existeRenovacionReciente = async (tx, alumnoId, inicioBusqueda) => 
   return !!deuda;
 };
 /**
- * 🐛 FIX deuda duplicada: una renovación no debe crear un segundo cobro si el
+ * FIX deuda duplicada: una renovación no debe crear un segundo cobro si el
  * alumno ya tiene OTRA inscripción (fuera del paquete que se renueva) en los
  * mismos horarios esperando pago o validación. Caso real: el alumno se
  * inscribió "de nuevo" (cuenta PENDIENTE) y minutos después se renovó el
@@ -190,7 +190,7 @@ export const validarSinInscripcionPendienteEnHorarios = async (tx, alumnoId, hor
   });
   if (pendiente) {
     throw new Error(
-      '⛔ El alumno ya tiene una inscripción en estos horarios pendiente de pago o activa. ' +
+      'El alumno ya tiene una inscripción en estos horarios pendiente de pago o activa. ' +
       'Valida o anula esa inscripción antes de renovar, para no generar un cobro duplicado.'
     );
   }

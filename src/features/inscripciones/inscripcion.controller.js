@@ -79,7 +79,7 @@ export const inscripcionController = {
       });
 
     } catch (error) {
-      // 0. 🐛 FIX: los errores de negocio con código propio (ApiError: 409 por
+      // 0. FIX: los errores de negocio con código propio (ApiError: 409 por
       // choque con una recuperación, 400 por feriado, etc.) se devuelven tal
       // cual. Antes caían al 500 genérico y el alumno solo veía "Error interno
       // al procesar la inscripción", sin saber que debía elegir otra fecha.

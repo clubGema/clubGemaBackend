@@ -509,7 +509,7 @@ export const merchService = {
       where: { id: cuenta_id },
       data: {
         monto_final: montoFinal,
-        // 🐛 FIX descuento 100%: una cuenta de S/ 0 también nace PENDIENTE. Antes
+        // FIX descuento 100%: una cuenta de S/ 0 también nace PENDIENTE. Antes
         // nacía PAGADA sin pago y las inscripciones quedaban en PENDIENTE_PAGO
         // "al aire": el alumno no veía pantalla de pago y el admin no tenía nada
         // que aprobar. Ahora sigue el flujo normal (reportar S/ 0 → aprobar).

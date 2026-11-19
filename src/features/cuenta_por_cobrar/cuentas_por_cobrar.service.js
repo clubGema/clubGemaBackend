@@ -343,7 +343,7 @@ export const CuentasPorCobrarService = {
 
       if (paqueteActual.length === 0) throw new Error("No hay horarios activos.");
 
-      // 🐛 FIX deuda duplicada (ver validarSinInscripcionPendienteEnHorarios)
+      // FIX deuda duplicada (ver validarSinInscripcionPendienteEnHorarios)
       await Validators.validarSinInscripcionPendienteEnHorarios(
         tx,
         paqueteActual[0].alumno_id,
@@ -382,7 +382,7 @@ export const CuentasPorCobrarService = {
 
       const paqueteIds = paqueteActual.map(i => i.id);
       const ultimaFechaCicloAnterior = await fechaUltimaClase(paqueteIds, { tx });
-      // 🐛 FIX fecha fin < inicio: el fin del NUEVO ciclo se calcula desde
+      // FIX fecha fin < inicio: el fin del NUEVO ciclo se calcula desde
       // fechaInicioNueva. Antes se usaba la fecha_inscripcion vieja (aún sin
       // actualizar), y el link nuevo heredaba el fin del ciclo anterior.
       const ultimaFecha = await fechaUltimaClase(paqueteIds, {
@@ -446,7 +446,7 @@ export const CuentasPorCobrarService = {
 
       if (paqueteActual.length === 0) throw new Error("No se encontraron horarios en este paquete.");
 
-      // 🐛 FIX deuda duplicada (ver validarSinInscripcionPendienteEnHorarios)
+      // FIX deuda duplicada (ver validarSinInscripcionPendienteEnHorarios)
       await Validators.validarSinInscripcionPendienteEnHorarios(
         tx,
         paqueteActual[0].alumno_id,
@@ -488,7 +488,7 @@ export const CuentasPorCobrarService = {
 
       const paqueteIds = paqueteActual.map(i => i.id);
       const ultimaFechaCicloAnterior = await fechaUltimaClase(paqueteIds, { tx });
-      // 🐛 FIX fecha fin < inicio: el fin del NUEVO ciclo se calcula desde
+      // FIX fecha fin < inicio: el fin del NUEVO ciclo se calcula desde
       // fechaInicioNueva. Antes se usaba la fecha_inscripcion vieja (aún sin
       // actualizar), y el link nuevo heredaba el fin del ciclo anterior.
       const ultimaFecha = await fechaUltimaClase(paqueteIds, {
